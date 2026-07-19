@@ -4,6 +4,8 @@ A modern, web-based sheet music **editor, viewer, and player** for the Great Hig
 
 Runs entirely in the browser (local-first, no backend). Built with React + TypeScript + Vite.
 
+**Live:** https://pipemaster-colinjohnstones-projects.vercel.app
+
 ## Run it
 
 ```sh
@@ -17,7 +19,7 @@ npm run build      # production build → dist/
 
 - **Engraved notation** — custom SVG renderer using the Bravura (SMuFL) font, following pipe-music conventions: melody stems always down, embellishments as small stem-up beamed gracenote clusters, 4-bar systems, part numbers, repeats, first/second endings.
 - **Semantic embellishments** — a note carries `{ type: 'doubling' }`, never hand-placed gracenotes. One registry defines each movement's gracenote expansion (doublings, half/thumb doublings, strikes, G/thumb strikes, grip, taorluath, birls, throws on D, pele, bubbly, single gracenotes) and drives rendering, playback, and file export alike.
-- **Editing** — click the staff to enter notes; arrows change pitch, `1–6` set length, `.` dot, `t` tie; a **visual embellishment grid** (each shows its own gracenote shape) plus single-key shortcuts (`d` doubling, `g`/`e` graces, `s` strike, `b` birl, `r` grip, `l` taorluath, `w` throw); full undo/redo; add/remove bars and parts; repeats and **1st/2nd endings**; tune metadata.
+- **Editing** — **point-and-click** entry with a live hover **ghost-note preview**, or **drag-and-drop** note lengths and embellishments straight onto the staff. **Bars auto-overflow**: fill a 4/4 bar and the next note flows into the following bar. Arrows change pitch, `1–6` set length, `.` dot, `t` tie; a **visual embellishment grid** (each card shows its own gracenote shape) plus single-key shortcuts (`d` doubling, `g`/`e` graces, `s` strike, `b` birl, `r` grip, `l` taorluath, `w` throw); full undo/redo; add/remove bars and parts; repeats and **1st/2nd endings**; tune metadata.
 - **Photo import (OMR)** — take or upload a photo of printed pipe music; a client-side computer-vision pipeline detects the staves and notehead **pitches** and drops them into the editor as a rough draft to refine. Rhythm and embellishments are added by hand.
 - **Playback** — synthesized chanter (just-intonation scale against the drones) with bass + two tenor drones, Highland pipes (Low A ≈ 480 Hz) or practice chanter pitch, tempo control, moving cursor. Repeats and **first/second endings** are honoured. Optional **metronome** and one-bar **count-in** for practice. Space to play/stop.
 - **Files** — autosaves to the browser (IndexedDB). Saves/opens native `.pms` (JSON). **Imports and exports Bagpipe Music Writer `.bww`** — the piping world's de facto format — validated against real published tunes. Exports **MusicXML** (`.musicxml`, opens in MuseScore/Sibelius/Finale), **MIDI** (`.mid`, with a drone layer), and print-optimised **PDF** — all from one Export menu.
