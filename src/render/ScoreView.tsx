@@ -31,6 +31,8 @@ const GLYPH = {
   timeSigDigit: (d: number) => 0xe080 + d,
 }
 
+const EMPTY_KEYS: Set<string> = new Set()
+
 const HEAD_W = SPACE * 1.18
 const STEM_LEN = SPACE * 3.5
 const STEM_W = SPACE * 0.13
@@ -63,7 +65,9 @@ interface Preview {
 interface ScoreViewProps {
   score: Score
   selection: NoteAddress | null
-  onSelectNote(addr: NoteAddress): void
+  /** Keys (`pi:bi:ni`) of all notes in the selected range, for highlighting. */
+  selectedKeys?: Set<string>
+  onSelectNote(addr: NoteAddress, extend: boolean): void
   onInsertNote(partIndex: number, barIndex: number, noteIndex: number, pitch: Pitch): void
   onBackgroundClick(): void
   onStaffDrop?(target: DropTarget, payload: string): void
@@ -274,13 +278,15 @@ function BarNotes({
   laid,
   staffTop,
   selection,
+  selectedKeys,
   onSelectNote,
   tieIn,
 }: {
   laid: LaidBar
   staffTop: number
   selection: NoteAddress | null
-  onSelectNote(addr: NoteAddress): void
+  selectedKeys: Set<string>
+  onSelectNote(addr: NoteAddress, extend: boolean): void
   tieIn: boolean
 }) {
   const barX = MARGIN_X + laid.x
@@ -299,11 +305,13 @@ function BarNotes({
     void gi
   })
 
-  const isSelected = (addr: NoteAddress) =>
+  const isFocus = (addr: NoteAddress) =>
     selection &&
     selection.partIndex === addr.partIndex &&
     selection.barIndex === addr.barIndex &&
     selection.noteIndex === addr.noteIndex
+  const inRange = (addr: NoteAddress) =>
+    selectedKeys.has(`${addr.partIndex}:${addr.barIndex}:${addr.noteIndex}`)
 
   const firstNote = laid.notes[0]
   return (
@@ -326,7 +334,9 @@ function BarNotes({
         const { note } = ln
         const x = barX + ln.x
         const y = headY(note.pitch)
-        const selectedFill = isSelected(ln.addr) ? 'var(--accent)' : 'var(--ink)'
+        const focus = isFocus(ln.addr)
+        const ranged = focus || inRange(ln.addr)
+        const selectedFill = ranged ? 'var(--accent)' : 'var(--ink)'
         const groupIndex = groups.findIndex((g) => g.includes(i))
         const beamed = inBeam.has(i)
         const stemEnd = beamed ? beamYByGroup.get(groupIndex)! : y + STEM_LEN
@@ -335,6 +345,18 @@ function BarNotes({
         const dotY = STAFF_POSITION[note.pitch] % 2 === 0 ? y - SPACE / 2 : y
         return (
           <g key={note.id}>
+            {ranged && (
+              // Selection highlight behind the note (brighter for the focus).
+              <rect
+                x={x - HEAD_W * 1.1}
+                y={staffTop - SPACE * 1.5}
+                width={HEAD_W * 2.2}
+                height={STAFF_HEIGHT + SPACE * 3}
+                rx={3}
+                fill="var(--accent)"
+                opacity={focus ? 0.16 : 0.09}
+              />
+            )}
             {note.pitch === 'HighA' && (
               <line
                 x1={x - HEAD_W * 1.1}
@@ -371,7 +393,7 @@ function BarNotes({
               style={{ cursor: 'pointer' }}
               onClick={(e) => {
                 e.stopPropagation()
-                onSelectNote(ln.addr)
+                onSelectNote(ln.addr, e.shiftKey)
               }}
             />
           </g>
@@ -484,6 +506,7 @@ function BarView({
   laid,
   staffTop,
   selection,
+  selectedKeys,
   onSelectNote,
   onInsertNote,
   onStaffDrop,
@@ -494,7 +517,8 @@ function BarView({
   laid: LaidBar
   staffTop: number
   selection: NoteAddress | null
-  onSelectNote(addr: NoteAddress): void
+  selectedKeys: Set<string>
+  onSelectNote(addr: NoteAddress, extend: boolean): void
   onInsertNote(partIndex: number, barIndex: number, noteIndex: number, pitch: Pitch): void
   onStaffDrop?(target: DropTarget, payload: string): void
   onPreview(p: Preview): void
@@ -591,6 +615,7 @@ function BarView({
         laid={laid}
         staffTop={staffTop}
         selection={selection}
+        selectedKeys={selectedKeys}
         onSelectNote={onSelectNote}
         tieIn={tieIn}
       />
@@ -602,6 +627,7 @@ function SystemView({
   system,
   contentWidth,
   selection,
+  selectedKeys,
   onSelectNote,
   onInsertNote,
   onStaffDrop,
@@ -612,7 +638,8 @@ function SystemView({
   system: LaidSystem
   contentWidth: number
   selection: NoteAddress | null
-  onSelectNote(addr: NoteAddress): void
+  selectedKeys: Set<string>
+  onSelectNote(addr: NoteAddress, extend: boolean): void
   onInsertNote(partIndex: number, barIndex: number, noteIndex: number, pitch: Pitch): void
   onStaffDrop?(target: DropTarget, payload: string): void
   onPreview(p: Preview): void
@@ -641,6 +668,7 @@ function SystemView({
           laid={b}
           staffTop={system.staffTop}
           selection={selection}
+          selectedKeys={selectedKeys}
           onSelectNote={onSelectNote}
           onInsertNote={onInsertNote}
           onStaffDrop={onStaffDrop}
@@ -682,6 +710,7 @@ function GhostNote({ preview }: { preview: Preview }) {
 export function ScoreView({
   score,
   selection,
+  selectedKeys,
   onSelectNote,
   onInsertNote,
   onBackgroundClick,
@@ -689,6 +718,7 @@ export function ScoreView({
   cursor,
   layoutOut,
 }: ScoreViewProps) {
+  const keys = selectedKeys ?? EMPTY_KEYS
   const layout = React.useMemo(() => layoutScore(score), [score])
   React.useEffect(() => {
     layoutOut?.(layout)
@@ -746,6 +776,7 @@ export function ScoreView({
           system={sys}
           contentWidth={contentWidth}
           selection={selection}
+          selectedKeys={keys}
           onSelectNote={onSelectNote}
           onInsertNote={onInsertNote}
           onStaffDrop={onStaffDrop}

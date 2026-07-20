@@ -3,6 +3,7 @@ import { useStore } from './state/store'
 import { ScoreView, type CursorPos, type DropTarget } from './render/ScoreView'
 import type { NoteAddress, Score } from './core/model/types'
 import { getNote } from './core/model/types'
+import { rangeAddresses, addrKey } from './core/model/range'
 import type { Duration } from './core/duration'
 import type { EmbellishmentType } from './core/embellishments/registry'
 import { PITCH_LABELS, LOW_A_HZ } from './core/pitch'
@@ -187,6 +188,30 @@ export default function App() {
         st.setSelection(null)
         return
       }
+      // Clipboard and select-all (work regardless of single selection).
+      if (e.metaKey || e.ctrlKey) {
+        const k = e.key.toLowerCase()
+        if (k === 'c') {
+          e.preventDefault()
+          st.copySelection()
+          return
+        }
+        if (k === 'x') {
+          e.preventDefault()
+          st.cutSelection()
+          return
+        }
+        if (k === 'v') {
+          e.preventDefault()
+          st.pasteClipboard()
+          return
+        }
+        if (k === 'a') {
+          e.preventDefault()
+          st.selectAll()
+          return
+        }
+      }
       if (!sel) return
       switch (e.key) {
         case 'ArrowUp':
@@ -200,14 +225,18 @@ export default function App() {
         case 'ArrowLeft':
         case 'ArrowRight': {
           e.preventDefault()
-          const n = nextAddr(st.score, sel, e.key === 'ArrowRight' ? 1 : -1)
-          if (n) st.setSelection(n)
+          const dir = e.key === 'ArrowRight' ? 1 : -1
+          if (e.shiftKey) st.extendSelection(dir)
+          else {
+            const n = nextAddr(st.score, sel, dir)
+            if (n) st.setSelection(n)
+          }
           break
         }
         case 'Delete':
         case 'Backspace':
         case 'x':
-          st.deleteNote(sel)
+          st.deleteSelection()
           break
         case '1':
           st.setNoteDuration(sel, 1)
@@ -290,6 +319,12 @@ export default function App() {
   const selBar = s.selection
     ? s.score.parts[s.selection.partIndex]?.bars[s.selection.barIndex]
     : undefined
+
+  const selectedKeys = React.useMemo(() => {
+    if (!s.selection || !s.anchor) return undefined
+    return new Set(rangeAddresses(s.score, s.anchor, s.selection).map(addrKey))
+  }, [s.score, s.selection, s.anchor])
+  const rangeCount = selectedKeys?.size ?? (s.selection ? 1 : 0)
 
   return (
     <div className={`app${isMobile ? ' mobile' : ''}`}>
@@ -472,6 +507,43 @@ export default function App() {
           </div>
 
           <div className="side-section">
+            <h3>Edit {rangeCount > 1 ? `(${rangeCount} notes)` : ''}</h3>
+            <div className="palette">
+              <button
+                disabled={!s.selection}
+                title="Copy selection (⌘C). Shift-click or Shift+←/→ to select a range."
+                onClick={s.copySelection}
+              >
+                Copy
+              </button>
+              <button disabled={!s.selection} title="Cut selection (⌘X)" onClick={s.cutSelection}>
+                Cut
+              </button>
+              <button
+                disabled={!s.clipboard}
+                title="Paste after the selected note (⌘V)"
+                onClick={s.pasteClipboard}
+              >
+                Paste
+              </button>
+              <button
+                disabled={!s.selection}
+                title="Delete selection (Del)"
+                onClick={s.deleteSelection}
+              >
+                Delete
+              </button>
+              <button
+                disabled={!s.selection}
+                title="Duplicate the whole part"
+                onClick={() => s.duplicatePart(s.selection?.partIndex ?? 0)}
+              >
+                ⧉ Dup part
+              </button>
+            </div>
+          </div>
+
+          <div className="side-section">
             <h3>Bars &amp; parts</h3>
             <div className="palette">
               <button
@@ -603,7 +675,10 @@ export default function App() {
             <ScoreView
               score={s.score}
               selection={s.selection}
-              onSelectNote={s.setSelection}
+              selectedKeys={selectedKeys}
+              onSelectNote={(addr, extend) =>
+                extend ? s.selectRangeTo(addr) : s.setSelection(addr)
+              }
               onInsertNote={s.insertNote}
               onBackgroundClick={() => s.setSelection(null)}
               onStaffDrop={handleStaffDrop}
