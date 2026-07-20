@@ -76,6 +76,7 @@ export default function App() {
   const [showPhotoImport, setShowPhotoImport] = React.useState(false)
   const isMobile = useIsMobile()
   const [sheetOpen, setSheetOpen] = React.useState(false)
+  const [zoom, setZoom] = React.useState(1)
   const layoutRef = React.useRef<ScoreLayout | null>(null)
 
   const selectedNote = s.selection ? getNote(s.score, s.selection) : undefined
@@ -437,6 +438,27 @@ export default function App() {
         </div>
         <div className="spacer" />
         <div className="tb-group">
+          <button
+            onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))}
+            title="Zoom out"
+          >
+            −
+          </button>
+          <button
+            onClick={() => setZoom(1)}
+            title="Reset zoom"
+            style={{ minWidth: 48 }}
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <button
+            onClick={() => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))}
+            title="Zoom in"
+          >
+            +
+          </button>
+        </div>
+        <div className="tb-group">
           <select value={tsValue} onChange={(e) => parseTs(e.target.value)} title="Time signature">
             {TIME_SIGS.map((t) => (
               <option key={t} value={t}>
@@ -671,7 +693,7 @@ export default function App() {
         </div>
 
         <div className="score-area">
-          <div className="score-page">
+          <div className="score-page" style={{ maxWidth: 1100 * zoom }}>
             <ScoreView
               score={s.score}
               selection={s.selection}

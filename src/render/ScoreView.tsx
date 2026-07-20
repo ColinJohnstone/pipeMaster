@@ -535,6 +535,17 @@ function BarView({
 
   return (
     <g>
+      {laid.isFirstOfSystem && laid.barNumber !== null && laid.barNumber > 1 && (
+        <text
+          x={barX + (laid.showClef ? CLEF_WIDTH + SPACE : SPACE * 0.5)}
+          y={staffTop - SPACE * 1.6}
+          fontSize={9}
+          fontFamily="Inter, sans-serif"
+          fill="var(--ink-soft)"
+        >
+          {laid.barNumber}
+        </text>
+      )}
       {laid.showClef && (
         <Glyph x={barX + SPACE * 0.8} y={staffTop + SPACE * 3} code={GLYPH.gClef} />
       )}

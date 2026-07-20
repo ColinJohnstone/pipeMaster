@@ -56,6 +56,8 @@ export interface LaidBar {
   showTimeSig: boolean
   isFirstOfSystem: boolean
   isLastOfPart: boolean
+  /** Sequential bar number (pickup bars are unnumbered → null). */
+  barNumber: number | null
 }
 
 export interface LaidSystem {
@@ -166,6 +168,17 @@ export function layoutScore(score: Score): ScoreLayout {
     })
   })
 
+  // Sequential bar numbers across the tune; pickup (anacrusis) bars are not
+  // counted, matching engraving convention.
+  const barNumbers = new Map<string, number>()
+  let counter = 0
+  for (const mb of measured) {
+    if (mb.bar.pickup === undefined) {
+      counter += 1
+      barNumbers.set(`${mb.partIndex}:${mb.barIndex}`, counter)
+    }
+  }
+
   // Break into systems: parts always start a new line (pipe convention),
   // at most 4 bars per line, wrap early only if genuinely over-full.
   const systems: LaidSystem[] = []
@@ -212,6 +225,7 @@ export function layoutScore(score: Score): ScoreLayout {
         timeSig: mb.timeSig,
         showClef: isFirst,
         showTimeSig: isFirst && mb.showTimeSig,
+        barNumber: barNumbers.get(`${mb.partIndex}:${mb.barIndex}`) ?? null,
         isFirstOfSystem: isFirst,
         isLastOfPart: false,
         notes: layNotes(mb.bar, mb.partIndex, mb.barIndex, prefix, width),
