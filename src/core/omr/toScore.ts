@@ -6,10 +6,9 @@ import type { TimeSig } from '../duration'
 import { barCapacityBeats } from '../duration'
 
 /**
- * Build an editable Score from recognised noteheads. Rhythm isn't recognised,
- * so every note enters as a quaver and bars are filled to the meter's
- * capacity — the pitches and order are the useful signal; the user fixes
- * durations and adds embellishments in the editor.
+ * Build an editable Score from recognised noteheads. Pitches, embellishments,
+ * and augmentation dots are carried over; durations are approximate (filled
+ * noteheads default to quavers), so the user still tidies rhythm in the editor.
  */
 export function omrToScore(
   notes: DetectedNote[],
@@ -22,7 +21,9 @@ export function omrToScore(
     const slice = notes.slice(i, i + quaversPerBar)
     bars.push({
       id: newId('b'),
-      notes: slice.map((n) => createNote(n.pitch, { base: 8, dots: 0 })),
+      notes: slice.map((n) =>
+        createNote(n.pitch, { base: 8, dots: n.dotted ? 1 : 0 }, n.embellishment),
+      ),
     })
   }
   if (bars.length === 0) bars.push({ id: newId('b'), notes: [] })

@@ -59,10 +59,20 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
         ic.height = res.height
         oc.width = res.width
         oc.height = res.height
-        ic.getContext('2d')!.drawImage(img, 0, 0, res.width, res.height)
+        // Show the processed (deskewed) image so the overlay lines up with it.
+        const bg = ic.getContext('2d')!.createImageData(res.width, res.height)
+        for (let i = 0; i < res.processedGray.length; i++) {
+          const v = res.processedGray[i]
+          bg.data[i * 4] = v
+          bg.data[i * 4 + 1] = v
+          bg.data[i * 4 + 2] = v
+          bg.data[i * 4 + 3] = 255
+        }
+        ic.getContext('2d')!.putImageData(bg, 0, 0)
+
         const ctx = oc.getContext('2d')!
         ctx.clearRect(0, 0, res.width, res.height)
-        ctx.strokeStyle = 'rgba(76,141,255,0.5)'
+        ctx.strokeStyle = 'rgba(76,141,255,0.4)'
         ctx.lineWidth = 1
         for (const s of res.staves) {
           for (const ly of s.lines) {
@@ -72,10 +82,22 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
             ctx.stroke()
           }
         }
+        // Gracenotes (blue), then melody noteheads (green) on top.
+        for (const n of res.notes) {
+          for (const g of n.graces) {
+            ctx.beginPath()
+            ctx.fillStyle = 'rgba(59,130,246,0.45)'
+            ctx.strokeStyle = '#2563eb'
+            ctx.lineWidth = 1
+            ctx.ellipse(g.x, g.y, 3.5, 3, 0, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.stroke()
+          }
+        }
         for (const n of res.notes) {
           ctx.beginPath()
-          ctx.fillStyle = 'rgba(34,197,94,0.35)'
-          ctx.strokeStyle = '#16a34a'
+          ctx.fillStyle = n.embellishment ? 'rgba(168,85,247,0.3)' : 'rgba(34,197,94,0.35)'
+          ctx.strokeStyle = n.embellishment ? '#9333ea' : '#16a34a'
           ctx.lineWidth = 1.5
           ctx.ellipse(n.x, n.y, 6, 5, 0, 0, Math.PI * 2)
           ctx.fill()
@@ -131,6 +153,7 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
   }
 
   const noteCount = result?.notes.length ?? 0
+  const embCount = result?.notes.filter((n) => n.embellishment).length ?? 0
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -145,10 +168,12 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
         {stage === 'choose' && (
           <div className="photo-choose">
             <p className="photo-intro">
-              Take or upload a clear, straight-on photo of printed pipe music. pipeMaster
-              detects the staves and notehead <strong>pitches</strong> and drops them into the
-              editor as quavers — you then set the rhythm and add embellishments. It works best
-              on sharp, high-contrast scans cropped to the music.
+              Take or upload a photo of printed pipe music. pipeMaster straightens the page,
+              finds the staves, and reads notehead <strong>pitches</strong>,{' '}
+              <strong>embellishments</strong> (by matching the gracenote patterns), and dots,
+              dropping them into the editor as a draft. Note lengths default to quavers, so you
+              tidy the rhythm afterward. Works best on sharp, high-contrast photos cropped to the
+              music.
             </p>
             <div className="photo-actions">
               <button className="primary" onClick={startCamera}>
@@ -193,16 +218,22 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
               <p>
                 Found <strong>{result.staves.length}</strong>{' '}
                 {result.staves.length === 1 ? 'staff' : 'staves'} and detected{' '}
-                <strong>{noteCount}</strong> {noteCount === 1 ? 'note' : 'notes'} (green).
+                <strong>{noteCount}</strong> {noteCount === 1 ? 'note' : 'notes'} (green /{' '}
+                <span style={{ color: '#a855f7' }}>purple = embellished</span>), with{' '}
+                <strong>{embCount}</strong> embellishment{embCount === 1 ? '' : 's'} matched
+                (gracenotes in blue).
               </p>
+              {Math.abs(result.skewDeg) > 0.5 && (
+                <p className="photo-note">Straightened the page by {result.skewDeg.toFixed(1)}°.</p>
+              )}
               {result.warnings.map((w, i) => (
                 <p key={i} className="photo-warn">
                   ⚠ {w}
                 </p>
               ))}
               <p className="photo-note">
-                This is a rough draft — pitches only, all as quavers. Import it, then correct
-                rhythm and add embellishments in the editor.
+                A draft to refine — pitches, embellishments, and dots are detected; note lengths
+                default to quavers. Import it, then tidy the rhythm in the editor.
               </p>
               <div className="photo-actions">
                 <button className="primary" disabled={noteCount === 0} onClick={doImport}>
