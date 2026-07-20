@@ -1,6 +1,6 @@
 import type { Score, NoteAddress } from '../core/model/types'
 import { timeSigForBar } from '../core/model/types'
-import { barCapacityBeats, beats, isCompound } from '../core/duration'
+import { barCapacityBeats, isCompound, noteBeats } from '../core/duration'
 import { frequency, type Pitch } from '../core/pitch'
 import { expandEmbellishment } from '../core/embellishments/registry'
 
@@ -112,7 +112,7 @@ export function buildEvents(
     const crotchetSec = (60 / score.tempo) / (isCompound(ts) ? 1.5 : 1)
     const bar = score.parts[pi].bars[bi]
     if (opts.metronome) {
-      const barDur = bar.notes.reduce((a, n) => a + beats(n.duration), 0) * crotchetSec
+      const barDur = bar.notes.reduce((a, n) => a + noteBeats(n), 0) * crotchetSec
       const beatLen = (isCompound(ts) ? 1.5 : 4 / ts.unit) * crotchetSec
       const nominal = barCapacityBeats(ts) * crotchetSec
       // Click through the bar's actual length (pickup bars are short).
@@ -122,7 +122,7 @@ export function buildEvents(
     }
     bar.notes.forEach((note, ni) => {
       const graces = expandEmbellishment(note.embellishment, note.pitch)
-      const noteSec = beats(note.duration) * crotchetSec
+      const noteSec = noteBeats(note) * crotchetSec
       const graceTotal = Math.min(graces.length * GRACE_SEC, noteSec - MIN_MELODY_SEC)
       const graceSec = graces.length > 0 ? graceTotal / graces.length : 0
       graces.forEach((g: Pitch, gi: number) => {

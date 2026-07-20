@@ -1,7 +1,7 @@
 import type { Part, Score } from './types'
 import { createBar } from './create'
 import { timeSigForBar } from './types'
-import { barCapacityBeats, beats } from '../duration'
+import { barCapacityBeats, noteBeats } from '../duration'
 
 const EPS = 1e-6
 
@@ -26,7 +26,7 @@ export function reflowPart(score: Score, partIndex: number, fromBar: number): vo
     let used = 0
     let splitAt = bar.notes.length
     for (let k = 0; k < bar.notes.length; k++) {
-      used += beats(bar.notes[k].duration)
+      used += noteBeats(bar.notes[k])
       if (used > cap + EPS) {
         splitAt = k
         break
@@ -50,5 +50,5 @@ export function reflowPart(score: Score, partIndex: number, fromBar: number): vo
 export function usedBeats(score: Score, partIndex: number, barIndex: number): number {
   const bar = score.parts[partIndex]?.bars[barIndex]
   if (!bar) return 0
-  return bar.notes.reduce((a, n) => a + beats(n.duration), 0)
+  return bar.notes.reduce((a, n) => a + noteBeats(n), 0)
 }

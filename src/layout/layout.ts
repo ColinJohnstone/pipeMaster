@@ -1,7 +1,7 @@
 import type { Score, Bar, Note, NoteAddress } from '../core/model/types'
 import { timeSigForBar } from '../core/model/types'
 import type { TimeSig } from '../core/duration'
-import { beats, beamGroupBoundaries } from '../core/duration'
+import { beats, noteBeats, beamGroupBoundaries } from '../core/duration'
 import type { Pitch } from '../core/pitch'
 import { expandEmbellishment } from '../core/embellishments/registry'
 
@@ -141,7 +141,7 @@ function layNotes(
       beatOffset,
     })
     x += noteWidth
-    beatOffset += beats(note.duration)
+    beatOffset += noteBeats(note)
   })
   return laid
 }

@@ -14,6 +14,18 @@ export function beats(d: Duration): number {
   return b
 }
 
+/** Time scaling for a tuplet: n notes in the time of the previous power of 2. */
+export function tupletRatio(tuplet?: number): number {
+  if (!tuplet || tuplet < 2) return 1
+  const normal = Math.pow(2, Math.floor(Math.log2(tuplet)))
+  return normal / tuplet
+}
+
+/** Sounding length of a note in crotchet beats, accounting for any tuplet. */
+export function noteBeats(note: { duration: Duration; tuplet?: number }): number {
+  return beats(note.duration) * tupletRatio(note.tuplet)
+}
+
 export const DURATION_NAMES: Record<number, string> = {
   1: 'Semibreve',
   2: 'Minim',

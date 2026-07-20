@@ -15,7 +15,7 @@ import {
   createPart,
 } from '../core/model/create'
 import type { Duration, TimeSig } from '../core/duration'
-import { beats } from '../core/duration'
+import { beats, noteBeats } from '../core/duration'
 import type { Pitch } from '../core/pitch'
 import { pitchAbove, pitchBelow } from '../core/pitch'
 import type { EmbellishmentType } from '../core/embellishments/registry'
@@ -81,6 +81,9 @@ export interface EditorState {
   deletePart(partIndex: number): void
   toggleRepeat(partIndex: number, barIndex: number, side: 'start' | 'end'): void
   setVolta(partIndex: number, barIndex: number, volta: 1 | 2 | null): void
+  tieSelection(): void
+  setBarTimeSig(partIndex: number, barIndex: number, ts: TimeSig | null): void
+  setTuplet(tuplet: number | null): void
   insertPickupBar(partIndex: number, barIndex: number): void
   togglePickup(partIndex: number, barIndex: number): void
 
@@ -398,6 +401,46 @@ export const useStore = create<EditorState>((set, get) => {
         else bar.volta = volta
       }),
 
+    tieSelection: () => {
+      const { score, selection, anchor } = get()
+      if (!selection) return
+      const addrs = anchor ? rangeAddresses(score, anchor, selection) : [selection]
+      if (addrs.length < 2) {
+        get().toggleTie(selection)
+        return
+      }
+      apply((d) => {
+        addrs.slice(0, -1).forEach((a) => {
+          const n = d.parts[a.partIndex]?.bars[a.barIndex]?.notes[a.noteIndex]
+          if (n) n.tieToNext = true
+        })
+      })
+    },
+
+    setBarTimeSig: (partIndex, barIndex, ts) =>
+      apply((d) => {
+        const bar = d.parts[partIndex]?.bars[barIndex]
+        if (!bar) return
+        if (ts === null) delete bar.timeSig
+        else bar.timeSig = ts
+        reflowPart(d, partIndex, barIndex)
+      }),
+
+    setTuplet: (tuplet) => {
+      const { score, selection, anchor } = get()
+      if (!selection) return
+      const addrs = anchor ? rangeAddresses(score, anchor, selection) : [selection]
+      apply((d) => {
+        addrs.forEach((a) => {
+          const n = d.parts[a.partIndex]?.bars[a.barIndex]?.notes[a.noteIndex]
+          if (!n) return
+          if (tuplet === null) delete n.tuplet
+          else n.tuplet = tuplet
+        })
+        reflowPart(d, addrs[0].partIndex, addrs[0].barIndex)
+      })
+    },
+
     insertPickupBar: (partIndex, barIndex) => {
       const cap = beats(get().entryDuration)
       const newBar = createBar()
@@ -422,7 +465,7 @@ export const useStore = create<EditorState>((set, get) => {
           return
         }
         // Seal at the bar's current content, or one entry-note if it's empty.
-        const used = bar.notes.reduce((a, n) => a + beats(n.duration), 0)
+        const used = bar.notes.reduce((a, n) => a + noteBeats(n), 0)
         bar.pickup = used > 0 ? used : beats(get().entryDuration)
         reflowPart(d, partIndex, barIndex)
       }),

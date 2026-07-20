@@ -34,6 +34,23 @@ const DURATION_GLYPHS: Array<{ base: Duration['base']; code: number; name: strin
 
 const TIME_SIGS = ['2/4', '3/4', '4/4', '5/4', '6/8', '9/8', '12/8', '2/2'] as const
 
+/** Common pipe tune types with their usual meter and tempo. */
+const TUNE_PRESETS: Array<{
+  name: string
+  beats: number
+  unit: 2 | 4 | 8
+  tempo: number
+}> = [
+  { name: '2/4 March', beats: 2, unit: 4, tempo: 88 },
+  { name: '4/4 March', beats: 4, unit: 4, tempo: 78 },
+  { name: '6/8 March', beats: 6, unit: 8, tempo: 92 },
+  { name: 'Strathspey', beats: 4, unit: 4, tempo: 132 },
+  { name: 'Reel', beats: 2, unit: 2, tempo: 108 },
+  { name: 'Jig', beats: 6, unit: 8, tempo: 122 },
+  { name: 'Hornpipe', beats: 4, unit: 4, tempo: 92 },
+  { name: 'Slow Air', beats: 4, unit: 4, tempo: 58 },
+]
+
 function nextAddr(score: Score, addr: NoteAddress, dir: 1 | -1): NoteAddress | null {
   let { partIndex, barIndex, noteIndex } = addr
   noteIndex += dir
@@ -510,12 +527,20 @@ export default function App() {
                 •
               </button>
               <button
-                title="Tie to next note (t)"
+                title="Tie (t). With a range selected, ties the whole run."
                 className={selectedNote?.tieToNext ? 'active' : ''}
                 disabled={!s.selection}
-                onClick={() => s.selection && s.toggleTie(s.selection)}
+                onClick={() => s.tieSelection()}
               >
                 ⌢ Tie
+              </button>
+              <button
+                title="Triplet — select 3 notes, then apply (3 in the time of 2)"
+                className={selectedNote?.tuplet ? 'active' : ''}
+                disabled={!s.selection}
+                onClick={() => s.setTuplet(selectedNote?.tuplet ? null : 3)}
+              >
+                ³⌒³
               </button>
             </div>
           </div>
@@ -664,11 +689,58 @@ export default function App() {
                 2nd ending
               </button>
             </div>
+            <div className="meta-grid" style={{ marginTop: 8 }}>
+              <label>
+                Meter change at this bar
+                <select
+                  disabled={!s.selection}
+                  value={selBar?.timeSig ? `${selBar.timeSig.beats}/${selBar.timeSig.unit}` : ''}
+                  onChange={(e) => {
+                    if (!s.selection) return
+                    if (!e.target.value) {
+                      s.setBarTimeSig(s.selection.partIndex, s.selection.barIndex, null)
+                    } else {
+                      const [a, b] = e.target.value.split('/').map(Number)
+                      s.setBarTimeSig(s.selection.partIndex, s.selection.barIndex, {
+                        beats: a,
+                        unit: b as 2 | 4 | 8,
+                      })
+                    }
+                  }}
+                >
+                  <option value="">(inherit)</option>
+                  {TIME_SIGS.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
           </div>
 
           <div className="side-section">
             <h3>Tune details</h3>
             <div className="meta-grid">
+              <label>
+                Preset
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const p = TUNE_PRESETS.find((x) => x.name === e.target.value)
+                    if (!p) return
+                    s.setMeta({ tuneType: p.name, tempo: p.tempo })
+                    s.setTimeSig({ beats: p.beats, unit: p.unit })
+                  }}
+                >
+                  <option value="">Tune type preset…</option>
+                  {TUNE_PRESETS.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label>
                 Title
                 <input value={s.score.title} onChange={(e) => s.setMeta({ title: e.target.value })} />

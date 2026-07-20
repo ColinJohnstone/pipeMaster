@@ -444,8 +444,56 @@ function BarNotes({
       {laid.notes.map((ln) => (
         <GraceCluster key={`g${ln.note.id}`} graces={ln.graces} barX={barX} staffTop={staffTop} />
       ))}
+      {tupletRuns(laid.notes).map((run, ri) => {
+        const first = laid.notes[run[0]]
+        const last = laid.notes[run[run.length - 1]]
+        const x1 = barX + first.x - HEAD_W * 0.6
+        const x2 = barX + last.x + HEAD_W * 0.6
+        const topY =
+          Math.min(...run.map((i) => headY(laid.notes[i].note.pitch))) - SPACE * 3.4
+        const mid = (x1 + x2) / 2
+        const num = laid.notes[run[0]].note.tuplet ?? 3
+        return (
+          <g key={`t${ri}`}>
+            <path
+              d={`M ${x1} ${topY + SPACE * 0.5} V ${topY} H ${mid - SPACE} M ${mid + SPACE} ${topY} H ${x2} V ${topY + SPACE * 0.5}`}
+              fill="none"
+              stroke="var(--ink-soft)"
+              strokeWidth={1}
+            />
+            <text
+              x={mid}
+              y={topY + SPACE * 0.55}
+              textAnchor="middle"
+              fontSize={SPACE * 1.5}
+              fontStyle="italic"
+              fontFamily="Georgia, serif"
+              fill="var(--ink-soft)"
+            >
+              {num}
+            </text>
+          </g>
+        )
+      })}
     </g>
   )
+}
+
+/** Maximal runs of consecutive notes sharing a tuplet grouping. */
+function tupletRuns(notes: { note: { tuplet?: number } }[]): number[][] {
+  const runs: number[][] = []
+  let run: number[] = []
+  for (let i = 0; i < notes.length; i++) {
+    const t = notes[i].note.tuplet
+    if (t && (run.length === 0 || notes[run[0]].note.tuplet === t)) {
+      run.push(i)
+    } else {
+      if (run.length > 0) runs.push(run)
+      run = t ? [i] : []
+    }
+  }
+  if (run.length > 0) runs.push(run)
+  return runs
 }
 
 function Tie({

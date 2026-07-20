@@ -9,6 +9,8 @@ export interface Note {
   embellishment?: Embellishment
   /** Tied to the following note. */
   tieToNext?: boolean
+  /** Tuplet grouping, e.g. 3 for a triplet (3 in the time of 2). */
+  tuplet?: number
 }
 
 export interface Bar {

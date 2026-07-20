@@ -1,6 +1,6 @@
 import type { Score } from '../model/types'
 import { timeSigForBar } from '../model/types'
-import { beats, isCompound } from '../duration'
+import { isCompound, noteBeats } from '../duration'
 import type { Pitch } from '../pitch'
 import { expandEmbellishment } from '../embellishments/registry'
 import { playOrder } from '../../audio/player'
@@ -53,13 +53,13 @@ function scoreToEvents(score: Score): { events: RawEvent[]; endTick: number } {
 
   for (let i = 0; i < flat.length; i++) {
     const note = flat[i]
-    let total = Math.round(beats(note.duration) * TPQ)
+    let total = Math.round(noteBeats(note) * TPQ)
 
     // Merge a run of same-pitch tied notes into one sustained note: the tie
     // absorbs the followers' durations and suppresses their re-articulation.
     let j = i
     while (flat[j].tieToNext && flat[j + 1] && flat[j + 1].pitch === note.pitch) {
-      total += Math.round(beats(flat[j + 1].duration) * TPQ)
+      total += Math.round(noteBeats(flat[j + 1]) * TPQ)
       j++
     }
 
