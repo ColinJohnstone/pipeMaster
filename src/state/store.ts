@@ -15,6 +15,7 @@ import {
   createPart,
 } from '../core/model/create'
 import type { Duration, TimeSig } from '../core/duration'
+import { beats } from '../core/duration'
 import type { Pitch } from '../core/pitch'
 import { pitchAbove, pitchBelow } from '../core/pitch'
 import type { EmbellishmentType } from '../core/embellishments/registry'
@@ -65,6 +66,8 @@ export interface EditorState {
   deletePart(partIndex: number): void
   toggleRepeat(partIndex: number, barIndex: number, side: 'start' | 'end'): void
   setVolta(partIndex: number, barIndex: number, volta: 1 | 2 | null): void
+  insertPickupBar(partIndex: number, barIndex: number): void
+  togglePickup(partIndex: number, barIndex: number): void
 
   setMeta(meta: Partial<Pick<Score, 'title' | 'tuneType' | 'composer' | 'tempo'>>): void
   setTimeSig(ts: TimeSig): void
@@ -265,6 +268,35 @@ export const useStore = create<EditorState>((set, get) => {
         if (!bar) return
         if (volta === null) delete bar.volta
         else bar.volta = volta
+      }),
+
+    insertPickupBar: (partIndex, barIndex) => {
+      const cap = beats(get().entryDuration)
+      const newBar = createBar()
+      newBar.pickup = cap
+      apply((d) => {
+        const part = d.parts[partIndex]
+        if (!part) return
+        part.bars.splice(barIndex, 0, newBar)
+      })
+      // Select the new (empty) pickup bar so the next click lands in it.
+      const bars = get().score.parts[partIndex]?.bars ?? []
+      const bi = bars.findIndex((b) => b.id === newBar.id)
+      if (bi >= 0) set({ selection: { partIndex, barIndex: bi, noteIndex: 0 } })
+    },
+
+    togglePickup: (partIndex, barIndex) =>
+      apply((d) => {
+        const bar = d.parts[partIndex]?.bars[barIndex]
+        if (!bar) return
+        if (bar.pickup !== undefined) {
+          delete bar.pickup
+          return
+        }
+        // Seal at the bar's current content, or one entry-note if it's empty.
+        const used = bar.notes.reduce((a, n) => a + beats(n.duration), 0)
+        bar.pickup = used > 0 ? used : beats(get().entryDuration)
+        reflowPart(d, partIndex, barIndex)
       }),
 
     setMeta: (meta) =>

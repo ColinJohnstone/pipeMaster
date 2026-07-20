@@ -20,7 +20,8 @@ export function reflowPart(score: Score, partIndex: number, fromBar: number): vo
 
   while (b < part.bars.length && guard-- > 0) {
     const bar = part.bars[b]
-    const cap = barCapacityBeats(timeSigForBar(score, partIndex, b))
+    // A pickup bar has its own fixed capacity; other bars use the meter.
+    const cap = bar.pickup ?? barCapacityBeats(timeSigForBar(score, partIndex, b))
 
     let used = 0
     let splitAt = bar.notes.length

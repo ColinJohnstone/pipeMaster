@@ -66,6 +66,31 @@ describe('reflowPart — auto bar overflow', () => {
     expect(pitches(s, 1)).toEqual([])
   })
 
+  it('a pickup bar seals at its capacity so extra notes flow onward', () => {
+    // Bar 0 is a pickup of one quaver (0.5 beats); adding a second note spills.
+    const s = scoreOf([
+      [createNote('E', { base: 8, dots: 0 }), createNote('LowA', { base: 8, dots: 0 })],
+      [],
+    ])
+    s.parts[0].bars[0].pickup = 0.5
+    reflowPart(s, 0, 0)
+    expect(pitches(s, 0)).toEqual(['E']) // just the lead-in quaver
+    expect(pitches(s, 1)).toEqual(['LowA']) // downbeat flows into bar 1
+  })
+
+  it('a full meter bar after a pickup still reflows against the meter, not the pickup', () => {
+    const s = scoreOf([
+      [createNote('E', { base: 8, dots: 0 })], // pickup, 0.5 beats
+      [createNote('LowA', q), createNote('B', q), createNote('C', q), createNote('D', q), createNote('E', q)],
+      [],
+    ])
+    s.parts[0].bars[0].pickup = 0.5
+    reflowPart(s, 0, 0)
+    expect(pitches(s, 0)).toEqual(['E'])
+    expect(pitches(s, 1)).toEqual(['LowA', 'B', 'C', 'D']) // 4 beats = full 4/4
+    expect(pitches(s, 2)).toEqual(['E'])
+  })
+
   it('does not loop on a single note longer than a bar', () => {
     const s = scoreOf([[createNote('LowA', h)]], 2, 4) // minim in a 2/4 bar: exactly full
     const whole = scoreOf([[{ ...createNote('LowA', { base: 1, dots: 0 }) }]], 2, 4)

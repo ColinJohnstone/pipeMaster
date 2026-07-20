@@ -20,6 +20,12 @@ export interface Bar {
   repeatEnd?: boolean
   /** 1st/2nd time ending this bar belongs to, if any. */
   volta?: 1 | 2
+  /**
+   * Anacrusis (pickup) bar: its capacity in crotchet beats, independent of
+   * the meter. A leading bar of one quaver has pickup = 0.5, so once that note
+   * is in, further notes flow into the next bar instead of filling this one.
+   */
+  pickup?: number
 }
 
 export interface Part {

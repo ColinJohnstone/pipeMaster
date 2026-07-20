@@ -488,6 +488,22 @@ export default function App() {
               >
                 − Part
               </button>
+              <button
+                title="Insert a short pickup (lead-in) bar before the selected bar, or at the start"
+                onClick={() =>
+                  s.insertPickupBar(s.selection?.partIndex ?? 0, s.selection?.barIndex ?? 0)
+                }
+              >
+                + Pickup
+              </button>
+              <button
+                disabled={!s.selection}
+                className={selBar?.pickup !== undefined ? 'active' : ''}
+                title="Mark the selected bar as a pickup (seal it at its current length so extra notes flow onward)"
+                onClick={() => s.selection && s.togglePickup(s.selection.partIndex, s.selection.barIndex)}
+              >
+                Pickup
+              </button>
             </div>
           </div>
 
