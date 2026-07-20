@@ -37,6 +37,51 @@ async function get<T>(key: string): Promise<T | undefined> {
 export const saveAutosave = (score: Score) => put('autosave', score)
 export const loadAutosave = () => get<Score>('autosave')
 
+// -- OMR training examples ---------------------------------------------------
+
+/** A corrected photo import kept as labelled ground truth for tuning/training. */
+export interface OmrExample {
+  at: number
+  width: number
+  height: number
+  /** Downscaled PNG data URL of the processed image. */
+  imagePng: string
+  notes: Array<{
+    pitch: string
+    base: number
+    x: number
+    y: number
+    embellishment?: string
+    dotted?: boolean
+  }>
+}
+
+const MAX_EXAMPLES = 40
+
+export async function saveOmrExample(ex: OmrExample): Promise<void> {
+  const existing = (await get<OmrExample[]>('omr_examples')) ?? []
+  existing.push(ex)
+  await put('omr_examples', existing.slice(-MAX_EXAMPLES))
+}
+
+export async function loadOmrExamples(): Promise<OmrExample[]> {
+  return (await get<OmrExample[]>('omr_examples')) ?? []
+}
+
+export async function clearOmrExamples(): Promise<void> {
+  await put('omr_examples', [])
+}
+
+/** Download the collected examples as a JSON dataset the user can keep/share. */
+export async function downloadOmrDataset(): Promise<number> {
+  const examples = await loadOmrExamples()
+  download(
+    `pipemaster-omr-dataset-${examples.length}.json`,
+    new Blob([JSON.stringify(examples, null, 2)], { type: 'application/json' }),
+  )
+  return examples.length
+}
+
 // -- File open/save ----------------------------------------------------------
 
 export function downloadScore(score: Score) {

@@ -1,13 +1,16 @@
 import React from 'react'
-import { recognize, type OmrResult } from '../core/omr/recognize'
+import { recognize, pitchAndStaffAt, type OmrResult, type DetectedNote } from '../core/omr/recognize'
 import { omrToScore } from '../core/omr/toScore'
+import { saveOmrExample, downloadOmrDataset } from '../persistence/idb'
 import type { Score } from '../core/model/types'
 import type { TimeSig } from '../core/duration'
 
 /**
- * Take/upload a photo of pipe music and turn it into an editable draft.
- * The recognition (see core/omr/recognize.ts) finds staves and noteheads and
- * reads pitches; rhythm and embellishments are added by hand afterwards.
+ * Take/upload a photo (or PDF page) of pipe music and turn it into a draft.
+ * After the first automatic guess you can correct it — tap a wrong notehead to
+ * remove it, tap the staff to add a missed one, and nudge the detection
+ * sensitivity to re-run. Your corrections both fix this import and are saved as
+ * labelled examples to improve recognition over time.
  */
 
 interface Props {
@@ -18,103 +21,154 @@ interface Props {
 
 type Stage = 'choose' | 'camera' | 'result'
 
+const DUR: Record<number, string> = { 1: '𝅝', 2: '𝅗𝅥', 4: '♩', 8: '♪', 16: '𝅘𝅥𝅯', 32: '𝅘𝅥𝅰' }
+
+/** Rasterise the first page of a PDF to a canvas — pdf.js is loaded on demand. */
+async function rasterizePdf(file: File): Promise<HTMLCanvasElement> {
+  const pdfjsLib = await import('pdfjs-dist')
+  pdfjsLib.GlobalWorkerOptions.workerSrc = (
+    await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+  ).default
+  const buf = await file.arrayBuffer()
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise
+  const page = await pdf.getPage(1)
+  // Render at ~1500px wide for a good OMR resolution.
+  const base = page.getViewport({ scale: 1 })
+  const scale = Math.min(3, Math.max(1, 1500 / base.width))
+  const viewport = page.getViewport({ scale })
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.ceil(viewport.width)
+  canvas.height = Math.ceil(viewport.height)
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = '#fff'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  await page.render({ canvas, canvasContext: ctx, viewport }).promise
+  return canvas
+}
+
 export function PhotoImport({ timeSig, onImport, onClose }: Props) {
   const [stage, setStage] = React.useState<Stage>('choose')
   const [busy, setBusy] = React.useState(false)
   const [result, setResult] = React.useState<OmrResult | null>(null)
+  const [notes, setNotes] = React.useState<DetectedNote[]>([])
+  const [scale, setScale] = React.useState(1)
   const imageCanvas = React.useRef<HTMLCanvasElement>(null)
   const overlayCanvas = React.useRef<HTMLCanvasElement>(null)
   const videoRef = React.useRef<HTMLVideoElement>(null)
   const streamRef = React.useRef<MediaStream | null>(null)
+  const sourceRef = React.useRef<ImageData | null>(null)
 
   const stopCamera = React.useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
   }, [])
-
   React.useEffect(() => () => stopCamera(), [stopCamera])
 
-  const runRecognition = React.useCallback((img: HTMLImageElement | HTMLCanvasElement, w: number, h: number) => {
-    setBusy(true)
-    // Draw at native size to an offscreen canvas for pixel access.
-    const off = document.createElement('canvas')
-    off.width = w
-    off.height = h
-    const octx = off.getContext('2d', { willReadFrequently: true })!
-    octx.drawImage(img, 0, 0, w, h)
-    const imageData = octx.getImageData(0, 0, w, h)
+  /** Median staff spacing, used for hit-testing and default note size. */
+  const spacing = React.useMemo(() => {
+    if (!result || result.staves.length === 0) return 14
+    return result.staves.reduce((a, s) => a + s.spacing, 0) / result.staves.length
+  }, [result])
 
-    // Defer so the busy state paints before the (synchronous) CV work.
+  const analyse = React.useCallback((imageData: ImageData, noteheadScale: number) => {
+    setBusy(true)
     setTimeout(() => {
-      const res = recognize(imageData)
+      const res = recognize(imageData, { noteheadScale })
       setResult(res)
+      setNotes(res.notes)
       setStage('result')
       setBusy(false)
-      // Draw the processed-size image and the detection overlay.
-      requestAnimationFrame(() => {
-        const ic = imageCanvas.current
-        const oc = overlayCanvas.current
-        if (!ic || !oc) return
-        ic.width = res.width
-        ic.height = res.height
-        oc.width = res.width
-        oc.height = res.height
-        // Show the processed (deskewed) image so the overlay lines up with it.
-        const bg = ic.getContext('2d')!.createImageData(res.width, res.height)
-        for (let i = 0; i < res.processedGray.length; i++) {
-          const v = res.processedGray[i]
-          bg.data[i * 4] = v
-          bg.data[i * 4 + 1] = v
-          bg.data[i * 4 + 2] = v
-          bg.data[i * 4 + 3] = 255
-        }
-        ic.getContext('2d')!.putImageData(bg, 0, 0)
-
-        const ctx = oc.getContext('2d')!
-        ctx.clearRect(0, 0, res.width, res.height)
-        ctx.strokeStyle = 'rgba(76,141,255,0.4)'
-        ctx.lineWidth = 1
-        for (const s of res.staves) {
-          for (const ly of s.lines) {
-            ctx.beginPath()
-            ctx.moveTo(0, ly)
-            ctx.lineTo(res.width, ly)
-            ctx.stroke()
-          }
-        }
-        // Gracenotes (blue), then melody noteheads (green) on top.
-        for (const n of res.notes) {
-          for (const g of n.graces) {
-            ctx.beginPath()
-            ctx.fillStyle = 'rgba(59,130,246,0.45)'
-            ctx.strokeStyle = '#2563eb'
-            ctx.lineWidth = 1
-            ctx.ellipse(g.x, g.y, 3.5, 3, 0, 0, Math.PI * 2)
-            ctx.fill()
-            ctx.stroke()
-          }
-        }
-        const DUR: Record<number, string> = { 1: '𝅝', 2: '𝅗𝅥', 4: '♩', 8: '♪', 16: '𝅘𝅥𝅯', 32: '𝅘𝅥𝅰' }
-        ctx.font = '11px sans-serif'
-        ctx.textAlign = 'center'
-        for (const n of res.notes) {
-          ctx.beginPath()
-          ctx.fillStyle = n.embellishment ? 'rgba(168,85,247,0.3)' : 'rgba(34,197,94,0.35)'
-          ctx.strokeStyle = n.embellishment ? '#9333ea' : '#16a34a'
-          ctx.lineWidth = 1.5
-          ctx.ellipse(n.x, n.y, 6, 5, 0, 0, Math.PI * 2)
-          ctx.fill()
-          ctx.stroke()
-          ctx.fillStyle = '#b45309'
-          ctx.fillText((DUR[n.base] ?? '') + (n.dotted ? '.' : ''), n.x, n.y - 9)
-        }
-      })
     }, 30)
   }, [])
 
-  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const runRecognition = React.useCallback(
+    (img: HTMLImageElement | HTMLCanvasElement, w: number, h: number) => {
+      const off = document.createElement('canvas')
+      off.width = w
+      off.height = h
+      const octx = off.getContext('2d', { willReadFrequently: true })!
+      octx.drawImage(img, 0, 0, w, h)
+      const imageData = octx.getImageData(0, 0, w, h)
+      sourceRef.current = imageData
+      setScale(1)
+      analyse(imageData, 1)
+    },
+    [analyse],
+  )
+
+  // Redraw the image + overlay whenever the result or edited notes change.
+  React.useEffect(() => {
+    if (stage !== 'result' || !result) return
+    const ic = imageCanvas.current
+    const oc = overlayCanvas.current
+    if (!ic || !oc) return
+    ic.width = result.width
+    ic.height = result.height
+    oc.width = result.width
+    oc.height = result.height
+
+    const bg = ic.getContext('2d')!.createImageData(result.width, result.height)
+    for (let i = 0; i < result.processedGray.length; i++) {
+      const v = result.processedGray[i]
+      bg.data[i * 4] = v
+      bg.data[i * 4 + 1] = v
+      bg.data[i * 4 + 2] = v
+      bg.data[i * 4 + 3] = 255
+    }
+    ic.getContext('2d')!.putImageData(bg, 0, 0)
+
+    const ctx = oc.getContext('2d')!
+    ctx.clearRect(0, 0, result.width, result.height)
+    ctx.strokeStyle = 'rgba(76,141,255,0.4)'
+    ctx.lineWidth = 1
+    for (const s of result.staves) {
+      for (const ly of s.lines) {
+        ctx.beginPath()
+        ctx.moveTo(0, ly)
+        ctx.lineTo(result.width, ly)
+        ctx.stroke()
+      }
+    }
+    for (const n of notes) {
+      for (const g of n.graces) {
+        ctx.beginPath()
+        ctx.fillStyle = 'rgba(59,130,246,0.45)'
+        ctx.strokeStyle = '#2563eb'
+        ctx.lineWidth = 1
+        ctx.ellipse(g.x, g.y, 3.5, 3, 0, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+      }
+    }
+    ctx.font = '11px sans-serif'
+    ctx.textAlign = 'center'
+    for (const n of notes) {
+      ctx.beginPath()
+      ctx.fillStyle = n.embellishment ? 'rgba(168,85,247,0.3)' : 'rgba(34,197,94,0.35)'
+      ctx.strokeStyle = n.embellishment ? '#9333ea' : '#16a34a'
+      ctx.lineWidth = 1.5
+      ctx.ellipse(n.x, n.y, 6, 5, 0, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+      ctx.fillStyle = '#b45309'
+      ctx.fillText((DUR[n.base] ?? '') + (n.dotted ? '.' : ''), n.x, n.y - 9)
+    }
+  }, [stage, result, notes])
+
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+      setBusy(true)
+      try {
+        const canvas = await rasterizePdf(file)
+        runRecognition(canvas, canvas.width, canvas.height)
+      } catch {
+        setBusy(false)
+        alert('Could not read that PDF. Try exporting the page as an image instead.')
+      }
+      return
+    }
     const img = new Image()
     img.onload = () => runRecognition(img, img.naturalWidth, img.naturalHeight)
     img.src = URL.createObjectURL(file)
@@ -122,9 +176,7 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
 
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
-      })
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
       streamRef.current = stream
       setStage('camera')
       requestAnimationFrame(() => {
@@ -141,30 +193,70 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
   const capture = () => {
     const v = videoRef.current
     if (!v) return
-    const w = v.videoWidth
-    const h = v.videoHeight
     const c = document.createElement('canvas')
-    c.width = w
-    c.height = h
-    c.getContext('2d')!.drawImage(v, 0, 0, w, h)
+    c.width = v.videoWidth
+    c.height = v.videoHeight
+    c.getContext('2d')!.drawImage(v, 0, 0, c.width, c.height)
     stopCamera()
-    runRecognition(c, w, h)
+    runRecognition(c, c.width, c.height)
   }
 
-  const doImport = () => {
+  // Tap the overlay to add a note, or tap a detected note to remove it.
+  const onOverlayClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!result) return
-    onImport(omrToScore(result.notes, timeSig, 'Imported from photo'))
+    const oc = overlayCanvas.current!
+    const rect = oc.getBoundingClientRect()
+    const x = ((e.clientX - rect.left) / rect.width) * oc.width
+    const y = ((e.clientY - rect.top) / rect.height) * oc.height
+
+    const hit = notes.findIndex((n) => Math.hypot(n.x - x, n.y - y) < spacing * 0.8)
+    if (hit >= 0) {
+      setNotes(notes.filter((_, i) => i !== hit))
+      return
+    }
+    const { pitch, staffIndex } = pitchAndStaffAt(result, y)
+    const added: DetectedNote = { pitch, x, y, staffIndex, base: 8, graces: [] }
+    setNotes([...notes, added].sort((a, b) => a.staffIndex - b.staffIndex || a.x - b.x))
+  }
+
+  const reDetect = (newScale: number) => {
+    setScale(newScale)
+    if (sourceRef.current) analyse(sourceRef.current, newScale)
+  }
+
+  const doImport = async () => {
+    if (!result) return
+    // Save this corrected page as a labelled example (best-effort).
+    try {
+      const png = imageCanvas.current?.toDataURL('image/png') ?? ''
+      await saveOmrExample({
+        at: Date.now(),
+        width: result.width,
+        height: result.height,
+        imagePng: png,
+        notes: notes.map((n) => ({
+          pitch: n.pitch,
+          base: n.base,
+          x: Math.round(n.x),
+          y: Math.round(n.y),
+          embellishment: n.embellishment,
+          dotted: n.dotted,
+        })),
+      })
+    } catch {
+      /* storage is best-effort */
+    }
+    onImport(omrToScore(notes, timeSig, 'Imported from photo'))
     onClose()
   }
 
-  const noteCount = result?.notes.length ?? 0
-  const embCount = result?.notes.filter((n) => n.embellishment).length ?? 0
+  const embCount = notes.filter((n) => n.embellishment).length
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h2>Import from photo</h2>
+          <h2>Import from photo or PDF</h2>
           <button className="modal-x" onClick={onClose} title="Close">
             ✕
           </button>
@@ -173,22 +265,31 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
         {stage === 'choose' && (
           <div className="photo-choose">
             <p className="photo-intro">
-              Take or upload a photo of printed pipe music. pipeMaster straightens the page,
-              finds the staves, and reads notehead <strong>pitches</strong>,{' '}
-              <strong>embellishments</strong> (by matching the gracenote patterns),{' '}
-              <strong>note lengths</strong> (from beams, flags, and stems), and dots, dropping
-              them into the editor as a draft to refine. Works best on sharp, high-contrast
-              photos cropped to the music.
+              Take or upload a photo (or a PDF page) of printed pipe music. pipeMaster straightens
+              the page, finds the staves, and reads notehead <strong>pitches</strong>,{' '}
+              <strong>embellishments</strong>, <strong>note lengths</strong>, and dots. It won't be
+              perfect — so on the next screen you can <strong>tap to add or remove notes</strong>{' '}
+              and tune the sensitivity before importing. Works best on sharp, high-contrast, cropped
+              images.
             </p>
             <div className="photo-actions">
               <button className="primary" onClick={startCamera}>
                 📷 Use camera
               </button>
               <label className="filebtn">
-                ⬆ Upload image
-                <input type="file" accept="image/*" onChange={onFile} hidden />
+                ⬆ Upload image / PDF
+                <input type="file" accept="image/*,application/pdf" onChange={onFile} hidden />
               </label>
             </div>
+            <p className="photo-note">
+              Corrections you make are saved on this device to help improve recognition.{' '}
+              <button
+                className="linkish"
+                onClick={() => downloadOmrDataset().then((n) => n === 0 && alert('No examples saved yet.'))}
+              >
+                Download my examples
+              </button>
+            </p>
           </div>
         )}
 
@@ -213,39 +314,46 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
 
         {busy && <div className="photo-busy">Analysing image…</div>}
 
-        {stage === 'result' && result && (
+        {stage === 'result' && result && !busy && (
           <div className="photo-result">
             <div className="photo-canvas-wrap">
               <canvas ref={imageCanvas} className="photo-img" />
-              <canvas ref={overlayCanvas} className="photo-overlay" />
+              <canvas
+                ref={overlayCanvas}
+                className="photo-overlay"
+                style={{ cursor: 'crosshair', pointerEvents: 'auto' }}
+                onClick={onOverlayClick}
+              />
             </div>
             <div className="photo-summary">
               <p>
-                Found <strong>{result.staves.length}</strong>{' '}
-                {result.staves.length === 1 ? 'staff' : 'staves'} and detected{' '}
-                <strong>{noteCount}</strong> {noteCount === 1 ? 'note' : 'notes'} (green /{' '}
-                <span style={{ color: '#a855f7' }}>purple = embellished</span>), with{' '}
-                <strong>{embCount}</strong> embellishment{embCount === 1 ? '' : 's'} matched
-                (gracenotes in blue).
+                <strong>{result.staves.length}</strong>{' '}
+                {result.staves.length === 1 ? 'staff' : 'staves'}, <strong>{notes.length}</strong>{' '}
+                notes (<span style={{ color: '#a855f7' }}>purple = embellished</span>,{' '}
+                {embCount} matched). <strong>Tap the staff to add a note; tap a note to remove it.</strong>
               </p>
-              {Math.abs(result.skewDeg) > 0.5 && (
-                <p className="photo-note">Straightened the page by {result.skewDeg.toFixed(1)}°.</p>
-              )}
+              <label className="photo-slider">
+                Sensitivity
+                <input
+                  type="range"
+                  min={0.6}
+                  max={1.6}
+                  step={0.1}
+                  value={scale}
+                  onChange={(e) => reDetect(Number(e.target.value))}
+                />
+                <span>{scale < 1 ? 'more notes' : scale > 1 ? 'fewer notes' : 'default'}</span>
+              </label>
               {result.warnings.map((w, i) => (
                 <p key={i} className="photo-warn">
                   ⚠ {w}
                 </p>
               ))}
-              <p className="photo-note">
-                A draft to refine — pitches, embellishments, dots, and note lengths (from beam,
-                flag, and stem shapes) are all detected. Recognition isn't perfect, so check the
-                rhythm in the editor.
-              </p>
               <div className="photo-actions">
-                <button className="primary" disabled={noteCount === 0} onClick={doImport}>
-                  Import {noteCount} notes to editor
+                <button className="primary" disabled={notes.length === 0} onClick={doImport}>
+                  Import {notes.length} notes
                 </button>
-                <button onClick={() => setStage('choose')}>Try another photo</button>
+                <button onClick={() => setStage('choose')}>Start over</button>
               </div>
             </div>
           </div>

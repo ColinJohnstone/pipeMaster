@@ -571,8 +571,27 @@ function durationBase(
 
 // -- Pipeline ----------------------------------------------------------------
 
-export function recognize(source: ImageData): OmrResult {
+export interface RecognizeOptions {
+  /**
+   * Scales the melody-notehead size threshold. < 1 detects smaller/more
+   * noteheads (catch missed notes); > 1 detects fewer (drop spurious ones).
+   */
+  noteheadScale?: number
+}
+
+/** Pitch and staff for a hand-placed correction at an image point. */
+export function pitchAndStaffAt(
+  result: Pick<OmrResult, 'staves'>,
+  y: number,
+): { pitch: Pitch; staffIndex: number } {
+  if (result.staves.length === 0) return { pitch: 'LowA', staffIndex: 0 }
+  const staffIndex = nearestStaff(result.staves, y)
+  return { pitch: pitchForY(result.staves[staffIndex], y), staffIndex }
+}
+
+export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrResult {
   const warnings: string[] = []
+  const noteheadScale = opts.noteheadScale ?? 1
 
   // Downscale wide images for speed.
   let { width: w, height: h } = source
@@ -622,7 +641,7 @@ export function recognize(source: ImageData): OmrResult {
   const dt = distanceTransform(noStaff, w, h)
   const blobs = findBlobs(dt, w, h, sp * 0.14)
 
-  const meloR = sp * 0.36 // radius threshold: melody vs everything smaller
+  const meloR = sp * 0.36 * noteheadScale // radius threshold: melody vs smaller
   const melodyBlobs = blobs.filter((b) => b.r >= meloR)
   const smallBlobs = blobs.filter((b) => b.r >= sp * 0.15 && b.r < meloR)
 
