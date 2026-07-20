@@ -577,6 +577,8 @@ export interface RecognizeOptions {
    * noteheads (catch missed notes); > 1 detects fewer (drop spurious ones).
    */
   noteheadScale?: number
+  /** Also detect gracenotes/embellishments. Off by default (notes + rhythm). */
+  detectEmbellishments?: boolean
 }
 
 /** Pitch and staff for a hand-placed correction at an image point. */
@@ -592,6 +594,7 @@ export function pitchAndStaffAt(
 export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrResult {
   const warnings: string[] = []
   const noteheadScale = opts.noteheadScale ?? 1
+  const detectEmb = opts.detectEmbellishments ?? false
 
   // Downscale wide images for speed.
   let { width: w, height: h } = source
@@ -641,12 +644,40 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
   const dt = distanceTransform(noStaff, w, h)
   const blobs = findBlobs(dt, w, h, sp * 0.14)
 
+  // Left edge of the staves, and the clef + time-signature zone after it, so
+  // the clef and metre glyphs aren't mistaken for noteheads.
+  let leftEdge = w
+  for (const s of staves) {
+    const midY = Math.round((s.lines[0] + s.lines[s.lines.length - 1]) / 2)
+    for (let x = 0; x < w; x++) {
+      if (inkAt(ink, w, h, x, Math.round(s.lines[0])) || inkAt(ink, w, h, x, midY)) {
+        leftEdge = Math.min(leftEdge, x)
+        break
+      }
+    }
+  }
+  if (leftEdge === w) leftEdge = 0
+  const clefZoneX = leftEdge + sp * 4
+
   const meloR = sp * 0.36 * noteheadScale // radius threshold: melody vs smaller
-  const melodyBlobs = blobs.filter((b) => b.r >= meloR)
-  const smallBlobs = blobs.filter((b) => b.r >= sp * 0.15 && b.r < meloR)
+  const meloRMax = sp * 0.78 // reject over-large blobs (clef bowls, etc.)
+
+  /** A blob is a plausible notehead: right size, on the staff, past the clef. */
+  const onStaff = (b: Blob): boolean => {
+    if (b.x < clefZoneX) return false // clef / time signature
+    const staff = staves[nearestStaff(staves, b.y)]
+    const bottom = staff.lines[staff.lines.length - 1]
+    const position = (bottom - b.y) / (sp / 2)
+    // Bagpipe notes live roughly from Low G to High A; reject anything well
+    // outside that band (page titles, composer text, lyrics, etc.).
+    return position >= -1.5 && position <= 12
+  }
+
+  const melodyBlobs = blobs.filter((b) => b.r >= meloR && b.r <= meloRMax && onStaff(b))
+  const smallBlobs = detectEmb ? blobs.filter((b) => b.r >= sp * 0.15 && b.r < meloR && onStaff(b)) : []
 
   // Open (half/whole) noteheads are found separately via their hole.
-  const openBlobs = findOpenNoteheads(noStaff, w, h, sp, melodyBlobs)
+  const openBlobs = findOpenNoteheads(noStaff, w, h, sp, melodyBlobs).filter(onStaff)
 
   // Build melody notes with a detected duration.
   const notes: DetectedNote[] = [

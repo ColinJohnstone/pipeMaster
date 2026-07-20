@@ -52,6 +52,7 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
   const [result, setResult] = React.useState<OmrResult | null>(null)
   const [notes, setNotes] = React.useState<DetectedNote[]>([])
   const [scale, setScale] = React.useState(1)
+  const [detectEmb, setDetectEmb] = React.useState(false)
   const imageCanvas = React.useRef<HTMLCanvasElement>(null)
   const overlayCanvas = React.useRef<HTMLCanvasElement>(null)
   const videoRef = React.useRef<HTMLVideoElement>(null)
@@ -70,16 +71,22 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
     return result.staves.reduce((a, s) => a + s.spacing, 0) / result.staves.length
   }, [result])
 
-  const analyse = React.useCallback((imageData: ImageData, noteheadScale: number) => {
-    setBusy(true)
-    setTimeout(() => {
-      const res = recognize(imageData, { noteheadScale })
-      setResult(res)
-      setNotes(res.notes)
-      setStage('result')
-      setBusy(false)
-    }, 30)
-  }, [])
+  const analyse = React.useCallback(
+    (imageData: ImageData, noteheadScale: number, embellishments: boolean) => {
+      setBusy(true)
+      setTimeout(() => {
+        const res = recognize(imageData, {
+          noteheadScale,
+          detectEmbellishments: embellishments,
+        })
+        setResult(res)
+        setNotes(res.notes)
+        setStage('result')
+        setBusy(false)
+      }, 30)
+    },
+    [],
+  )
 
   const runRecognition = React.useCallback(
     (img: HTMLImageElement | HTMLCanvasElement, w: number, h: number) => {
@@ -91,9 +98,9 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
       const imageData = octx.getImageData(0, 0, w, h)
       sourceRef.current = imageData
       setScale(1)
-      analyse(imageData, 1)
+      analyse(imageData, 1, detectEmb)
     },
-    [analyse],
+    [analyse, detectEmb],
   )
 
   // Redraw the image + overlay whenever the result or edited notes change.
@@ -219,9 +226,10 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
     setNotes([...notes, added].sort((a, b) => a.staffIndex - b.staffIndex || a.x - b.x))
   }
 
-  const reDetect = (newScale: number) => {
+  const reDetect = (newScale: number, emb: boolean) => {
     setScale(newScale)
-    if (sourceRef.current) analyse(sourceRef.current, newScale)
+    setDetectEmb(emb)
+    if (sourceRef.current) analyse(sourceRef.current, newScale, emb)
   }
 
   const doImport = async () => {
@@ -266,11 +274,10 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
           <div className="photo-choose">
             <p className="photo-intro">
               Take or upload a photo (or a PDF page) of printed pipe music. pipeMaster straightens
-              the page, finds the staves, and reads notehead <strong>pitches</strong>,{' '}
-              <strong>embellishments</strong>, <strong>note lengths</strong>, and dots. It won't be
-              perfect — so on the next screen you can <strong>tap to add or remove notes</strong>{' '}
-              and tune the sensitivity before importing. Works best on sharp, high-contrast, cropped
-              images.
+              the page, finds the staves, and reads the <strong>notes and their lengths</strong>{' '}
+              (clef, time signature and page text are ignored). It won't be perfect — so on the next
+              screen you can <strong>tap to add or remove notes</strong> and tune the sensitivity
+              before importing. Works best on a sharp, high-contrast image cropped to the music.
             </p>
             <div className="photo-actions">
               <button className="primary" onClick={startCamera}>
@@ -329,8 +336,8 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
               <p>
                 <strong>{result.staves.length}</strong>{' '}
                 {result.staves.length === 1 ? 'staff' : 'staves'}, <strong>{notes.length}</strong>{' '}
-                notes (<span style={{ color: '#a855f7' }}>purple = embellished</span>,{' '}
-                {embCount} matched). <strong>Tap the staff to add a note; tap a note to remove it.</strong>
+                notes detected{detectEmb && embCount > 0 ? ` (${embCount} embellished)` : ''}.{' '}
+                <strong>Tap the staff to add a note; tap a note to remove it.</strong>
               </p>
               <label className="photo-slider">
                 Sensitivity
@@ -340,9 +347,17 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
                   max={1.6}
                   step={0.1}
                   value={scale}
-                  onChange={(e) => reDetect(Number(e.target.value))}
+                  onChange={(e) => reDetect(Number(e.target.value), detectEmb)}
                 />
                 <span>{scale < 1 ? 'more notes' : scale > 1 ? 'fewer notes' : 'default'}</span>
+              </label>
+              <label className="photo-check">
+                <input
+                  type="checkbox"
+                  checked={detectEmb}
+                  onChange={(e) => reDetect(scale, e.target.checked)}
+                />
+                Also detect embellishments (experimental)
               </label>
               {result.warnings.map((w, i) => (
                 <p key={i} className="photo-warn">

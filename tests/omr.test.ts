@@ -69,7 +69,7 @@ describe('OMR recognition on a synthetic staff', () => {
   img.head(60, 70) // Low A
   img.head(150, 52) // D
   img.head(240, 28) // High A
-  const res = recognize(img.imageData)
+  const res = recognize(img.imageData, { detectEmbellishments: true })
 
   it('detects exactly one staff of five lines', () => {
     expect(res.staves.length).toBe(1)
@@ -88,7 +88,7 @@ describe('OMR embellishment recognition', () => {
     const img = staffImage()
     img.grace(150, 34) // High G gracenote, just left of / above the melody note
     img.head(168, 64) // melody B
-    const res = recognize(img.imageData)
+    const res = recognize(img.imageData, { detectEmbellishments: true })
     expect(res.notes.length).toBe(1)
     expect(res.notes[0].pitch).toBe('B')
     expect(res.notes[0].embellishment).toBe('gGrace')
@@ -101,7 +101,7 @@ describe('OMR embellishment recognition', () => {
     img.grace(186, 52) // D
     img.grace(196, 46) // E
     img.head(214, 52) // melody D
-    const res = recognize(img.imageData)
+    const res = recognize(img.imageData, { detectEmbellishments: true })
     const d = res.notes.find((n) => n.pitch === 'D')
     expect(d).toBeTruthy()
     expect(d!.embellishment).toBe('doubling')
@@ -114,7 +114,7 @@ describe('OMR duration recognition', () => {
     img.stemNote(70, 52, 0) // stem, no beam → crotchet (base 4)
     img.stemNote(150, 52, 1) // 1 beam → quaver (base 8)
     img.stemNote(230, 52, 2) // 2 beams → semiquaver (base 16)
-    const res = recognize(img.imageData)
+    const res = recognize(img.imageData, { detectEmbellishments: true })
     const bases = res.notes.sort((a, b) => a.x - b.x).map((n) => n.base)
     expect(bases).toEqual([4, 8, 16])
   })
@@ -122,9 +122,26 @@ describe('OMR duration recognition', () => {
   it('reads an open notehead with a stem as a minim', () => {
     const img = staffImage()
     img.openNote(120, 52) // open head + stem → half note (base 2)
-    const res = recognize(img.imageData)
+    const res = recognize(img.imageData, { detectEmbellishments: true })
     expect(res.notes.length).toBe(1)
     expect(res.notes[0].base).toBe(2)
+  })
+})
+
+describe('OMR rejects non-notes (clef, time signature, page text)', () => {
+  it('ignores blobs in the clef zone and text above the staff', () => {
+    const img = staffImage(360)
+    // A clef-ish blob at the far left (within the clef/time-signature zone).
+    img.head(26, 64)
+    // Title/composer text well above the staff (far outside the pitch band).
+    img.head(150, 12)
+    img.head(230, 10)
+    // Two genuine noteheads on the staff, past the clef.
+    img.head(180, 64)
+    img.head(260, 52)
+    const res = recognize(img.imageData)
+    expect(res.notes.length).toBe(2)
+    expect(res.notes.map((n) => n.pitch)).toEqual(['B', 'D'])
   })
 })
 
@@ -148,7 +165,7 @@ describe('OMR → Score conversion', () => {
     img.grace(150, 34) // High G gracenote
     img.head(168, 64) // melody B
     img.head(240, 52) // melody D
-    const res = recognize(img.imageData)
+    const res = recognize(img.imageData, { detectEmbellishments: true })
     const score = omrToScore(res.notes, { beats: 4, unit: 4 }, 'Test')
     const notes = score.parts[0].bars.flatMap((b) => b.notes)
     expect(notes.map((n) => n.pitch)).toEqual(['B', 'D'])
