@@ -66,7 +66,7 @@ function staffImage(w = 320, h = 120) {
 
 describe('OMR recognition on a synthetic staff', () => {
   const img = staffImage()
-  img.head(60, 70) // Low A
+  img.head(100, 70) // Low A
   img.head(150, 52) // D
   img.head(240, 28) // High A
   const res = recognize(img.imageData, { detectEmbellishments: true })
@@ -111,7 +111,7 @@ describe('OMR embellishment recognition', () => {
 describe('OMR duration recognition', () => {
   it('reads stem/beam counts as crotchet, quaver, semiquaver', () => {
     const img = staffImage(360)
-    img.stemNote(70, 52, 0) // stem, no beam → crotchet (base 4)
+    img.stemNote(100, 52, 0) // stem, no beam → crotchet (base 4)
     img.stemNote(150, 52, 1) // 1 beam → quaver (base 8)
     img.stemNote(230, 52, 2) // 2 beams → semiquaver (base 16)
     const res = recognize(img.imageData, { detectEmbellishments: true })

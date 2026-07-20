@@ -64,7 +64,7 @@ const POSITION_TO_PITCH: Record<number, Pitch> = {
   10: 'HighA',
 }
 
-const MAX_WIDTH = 1100
+const MAX_WIDTH = 1600
 
 // -- Basic image ops ---------------------------------------------------------
 
@@ -204,21 +204,45 @@ function detectStaves(ink: Uint8Array, w: number, h: number, warnings: string[])
   }
 
   const gaps = lineCentres.slice(1).map((v, i) => v - lineCentres[i])
-  const sortedGaps = [...gaps].sort((a, b) => a - b)
-  const sp = sortedGaps[Math.floor(sortedGaps.length / 2)]
+  // Single-line spacing = the most common gap (ignoring tiny noise gaps).
+  const hist = new Map<number, number>()
+  for (const g of gaps) {
+    const k = Math.round(g)
+    if (k >= 3) hist.set(k, (hist.get(k) ?? 0) + 1)
+  }
+  let sp = 0
+  let bestN = 0
+  for (const [k, n] of hist) {
+    if (n > bestN) {
+      bestN = n
+      sp = k
+    }
+  }
+  if (!sp) {
+    const sorted = [...gaps].sort((a, b) => a - b)
+    sp = sorted[Math.floor(sorted.length / 2)] || 8
+  }
 
+  // Group consecutive lines belonging to one staff (a missing middle line
+  // leaves a ~2sp gap; between-staff gaps are far larger). Each staff spans
+  // exactly four gaps (five lines), so interpolate the five evenly whether or
+  // not every line was detected — this fixes spacing when a line drops out.
   const staves: DetectedStaff[] = []
   let group: number[] = [lineCentres[0]]
   const flush = () => {
-    if (group.length >= 4) {
-      const lines = group.slice(0, 5)
-      const gsp = (lines[lines.length - 1] - lines[0]) / (lines.length - 1)
-      staves.push({ lines, spacing: gsp })
+    if (group.length >= 3) {
+      const first = group[0]
+      const last = group[group.length - 1]
+      const nGaps = Math.round((last - first) / sp)
+      if (nGaps === 4) {
+        const gsp = (last - first) / 4
+        staves.push({ lines: [0, 1, 2, 3, 4].map((k) => first + k * gsp), spacing: gsp })
+      }
     }
     group = []
   }
   for (let i = 1; i < lineCentres.length; i++) {
-    if (lineCentres[i] - lineCentres[i - 1] < sp * 1.8) group.push(lineCentres[i])
+    if (lineCentres[i] - lineCentres[i - 1] <= sp * 2.6) group.push(lineCentres[i])
     else {
       flush()
       group = [lineCentres[i]]
@@ -596,7 +620,8 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
   const noteheadScale = opts.noteheadScale ?? 1
   const detectEmb = opts.detectEmbellishments ?? false
 
-  // Downscale wide images for speed.
+  // Downscale wide images for speed. Use BOX AVERAGING (not nearest-neighbour)
+  // so thin staff lines survive as gray rather than being dropped between rows.
   let { width: w, height: h } = source
   let gray: Uint8Array
   if (w > MAX_WIDTH) {
@@ -605,10 +630,22 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     const nh = Math.round(h * scale)
     const full = toGray(source.data, w, h)
     const small = new Uint8Array(nw * nh)
+    const step = w / nw
     for (let y = 0; y < nh; y++) {
-      const sy = Math.min(h - 1, Math.floor(y / scale))
+      const sy0 = Math.floor(y * step)
+      const sy1 = Math.min(h, Math.max(sy0 + 1, Math.floor((y + 1) * step)))
       for (let x = 0; x < nw; x++) {
-        small[y * nw + x] = full[sy * w + Math.min(w - 1, Math.floor(x / scale))]
+        const sx0 = Math.floor(x * step)
+        const sx1 = Math.min(w, Math.max(sx0 + 1, Math.floor((x + 1) * step)))
+        let sum = 0
+        let count = 0
+        for (let yy = sy0; yy < sy1; yy++) {
+          for (let xx = sx0; xx < sx1; xx++) {
+            sum += full[yy * w + xx]
+            count++
+          }
+        }
+        small[y * nw + x] = count ? sum / count : full[sy0 * w + sx0]
       }
     }
     gray = small
@@ -657,10 +694,11 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     }
   }
   if (leftEdge === w) leftEdge = 0
-  const clefZoneX = leftEdge + sp * 4
+  // Clef + time signature sit at the start of the line; skip that whole zone.
+  const clefZoneX = leftEdge + sp * 6.5
 
-  const meloR = sp * 0.36 * noteheadScale // radius threshold: melody vs smaller
-  const meloRMax = sp * 0.78 // reject over-large blobs (clef bowls, etc.)
+  const meloR = sp * 0.34 * noteheadScale // radius threshold: melody vs smaller
+  const meloRMax = sp * 0.85 // reject over-large blobs (clef bowls, etc.)
 
   /** A blob is a plausible notehead: right size, on the staff, past the clef. */
   const onStaff = (b: Blob): boolean => {
@@ -673,7 +711,36 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     return position >= -1.5 && position <= 12
   }
 
-  const melodyBlobs = blobs.filter((b) => b.r >= meloR && b.r <= meloRMax && onStaff(b))
+  /**
+   * Pipe music is monophonic — one note at a time — so blobs stacked at the
+   * same x are never a chord. They are a barline (thick bar + repeat dots) or
+   * detection noise: drop columns of three or more, keep the largest of a pair.
+   */
+  const dedupeColumns = (bs: Blob[]): Blob[] => {
+    const sorted = [...bs].sort((a, b) => a.x - b.x)
+    const used = new Array(sorted.length).fill(false)
+    const kept: Blob[] = []
+    for (let i = 0; i < sorted.length; i++) {
+      if (used[i]) continue
+      const col = [sorted[i]]
+      used[i] = true
+      for (let j = i + 1; j < sorted.length && sorted[j].x - sorted[i].x < sp * 0.35; j++) {
+        if (!used[j]) {
+          col.push(sorted[j])
+          used[j] = true
+        }
+      }
+      // Only a true stack (barline: thick bar + repeat dots) makes 3+; keep
+      // everything else, including a close pair (a note beside a barline dot).
+      if (col.length >= 3) continue
+      for (const bl of col) kept.push(bl)
+    }
+    return kept
+  }
+
+  const melodyBlobs = dedupeColumns(
+    blobs.filter((b) => b.r >= meloR && b.r <= meloRMax && onStaff(b)),
+  )
   const smallBlobs = detectEmb ? blobs.filter((b) => b.r >= sp * 0.15 && b.r < meloR && onStaff(b)) : []
 
   // Open (half/whole) noteheads are found separately via their hole.
