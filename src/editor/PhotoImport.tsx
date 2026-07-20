@@ -94,6 +94,9 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
             ctx.stroke()
           }
         }
+        const DUR: Record<number, string> = { 1: '𝅝', 2: '𝅗𝅥', 4: '♩', 8: '♪', 16: '𝅘𝅥𝅯', 32: '𝅘𝅥𝅰' }
+        ctx.font = '11px sans-serif'
+        ctx.textAlign = 'center'
         for (const n of res.notes) {
           ctx.beginPath()
           ctx.fillStyle = n.embellishment ? 'rgba(168,85,247,0.3)' : 'rgba(34,197,94,0.35)'
@@ -102,6 +105,8 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
           ctx.ellipse(n.x, n.y, 6, 5, 0, 0, Math.PI * 2)
           ctx.fill()
           ctx.stroke()
+          ctx.fillStyle = '#b45309'
+          ctx.fillText((DUR[n.base] ?? '') + (n.dotted ? '.' : ''), n.x, n.y - 9)
         }
       })
     }, 30)
@@ -170,10 +175,10 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
             <p className="photo-intro">
               Take or upload a photo of printed pipe music. pipeMaster straightens the page,
               finds the staves, and reads notehead <strong>pitches</strong>,{' '}
-              <strong>embellishments</strong> (by matching the gracenote patterns), and dots,
-              dropping them into the editor as a draft. Note lengths default to quavers, so you
-              tidy the rhythm afterward. Works best on sharp, high-contrast photos cropped to the
-              music.
+              <strong>embellishments</strong> (by matching the gracenote patterns),{' '}
+              <strong>note lengths</strong> (from beams, flags, and stems), and dots, dropping
+              them into the editor as a draft to refine. Works best on sharp, high-contrast
+              photos cropped to the music.
             </p>
             <div className="photo-actions">
               <button className="primary" onClick={startCamera}>
@@ -232,8 +237,9 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
                 </p>
               ))}
               <p className="photo-note">
-                A draft to refine — pitches, embellishments, and dots are detected; note lengths
-                default to quavers. Import it, then tidy the rhythm in the editor.
+                A draft to refine — pitches, embellishments, dots, and note lengths (from beam,
+                flag, and stem shapes) are all detected. Recognition isn't perfect, so check the
+                rhythm in the editor.
               </p>
               <div className="photo-actions">
                 <button className="primary" disabled={noteCount === 0} onClick={doImport}>

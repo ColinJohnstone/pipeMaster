@@ -27,6 +27,8 @@ export interface DetectedNote {
   x: number
   y: number
   staffIndex: number
+  /** Detected note-length base (4 = crotchet, 8 = quaver, …). */
+  base: 1 | 2 | 4 | 8 | 16 | 32
   embellishment?: EmbellishmentType
   dotted?: boolean
   graces: DetectedGrace[]
@@ -227,15 +229,43 @@ function detectStaves(ink: Uint8Array, w: number, h: number, warnings: string[])
   return staves
 }
 
-function removeStaffLines(ink: Uint8Array, w: number, h: number): Uint8Array {
+/**
+ * Erase staff lines using their known positions. At each line, a column whose
+ * vertical ink run is no thicker than a line is cleared; columns with a long
+ * run (a stem or notehead passing through) are kept. This copes with lines a
+ * few pixels thick, which the naive "no ink above or below" test leaves behind.
+ */
+function removeStaffLines(
+  ink: Uint8Array,
+  w: number,
+  h: number,
+  staves: DetectedStaff[],
+  sp: number,
+): Uint8Array {
   const out = ink.slice()
-  for (let x = 0; x < w; x++) {
-    for (let y = 0; y < h; y++) {
-      const i = y * w + x
-      if (!ink[i]) continue
-      const above = y > 1 && (ink[i - w] || ink[i - 2 * w])
-      const below = y < h - 2 && (ink[i + w] || ink[i + 2 * w])
-      if (!above && !below) out[i] = 0
+  const maxThick = Math.max(2, Math.round(sp * 0.2))
+  const idx = (x: number, y: number) => y * w + x
+  for (const st of staves) {
+    for (const line of st.lines) {
+      const y0 = Math.round(line)
+      for (let x = 0; x < w; x++) {
+        // Find an ink pixel on the line at this column.
+        let seed = -1
+        for (let dy = -1; dy <= 1; dy++) {
+          if (inkAt(ink, w, h, x, y0 + dy)) {
+            seed = y0 + dy
+            break
+          }
+        }
+        if (seed < 0) continue
+        let up = 0
+        while (inkAt(ink, w, h, x, seed - 1 - up)) up++
+        let dn = 0
+        while (inkAt(ink, w, h, x, seed + 1 + dn)) dn++
+        if (up + dn + 1 <= maxThick) {
+          for (let y = seed - up; y <= seed + dn; y++) out[idx(x, y)] = 0
+        }
+      }
     }
   }
   return out
@@ -345,6 +375,200 @@ function nearestStaff(staves: DetectedStaff[], y: number): number {
   return idx
 }
 
+// -- Duration analysis (stems, beams, flags, open noteheads) -----------------
+
+function inkAt(ink: Uint8Array, w: number, h: number, x: number, y: number): boolean {
+  return x >= 0 && x < w && y >= 0 && y < h && ink[y * w + x] === 1
+}
+
+interface Stem {
+  dir: 1 | -1 | 0 // 1 = down, -1 = up
+  tipY: number
+  x: number
+  len: number
+}
+
+/** Longest vertical ink run attached to a notehead — the stem. */
+function findStem(
+  ink: Uint8Array,
+  w: number,
+  h: number,
+  nx: number,
+  ny: number,
+  r: number,
+  sp: number,
+): Stem {
+  let best: Stem = { dir: 0, tipY: ny, x: Math.round(nx), len: 0 }
+  // A stem attaches at the left or right edge of the notehead (~half a space
+  // from centre), so search both the blob radius and the nominal head width.
+  const cols = [
+    Math.round(nx - r * 0.8),
+    Math.round(nx + r * 0.8),
+    Math.round(nx - sp * 0.5),
+    Math.round(nx + sp * 0.5),
+    Math.round(nx),
+  ]
+  for (const sx of cols) {
+    for (const dir of [1, -1] as const) {
+      let len = 0
+      let gaps = 0
+      let y = Math.round(ny + dir * r * 0.5)
+      let lastInkY = y
+      for (; y >= 0 && y < h; y += dir) {
+        if (inkAt(ink, w, h, sx, y) || inkAt(ink, w, h, sx - 1, y) || inkAt(ink, w, h, sx + 1, y)) {
+          len += 1 + gaps
+          gaps = 0
+          lastInkY = y
+        } else {
+          gaps++
+          if (gaps > 2) break
+        }
+      }
+      // tipY is the actual furthest ink, not ny+len (the scan starts offset).
+      if (len > best.len) best = { dir, tipY: lastInkY, x: sx, len }
+    }
+  }
+  return best
+}
+
+/** Consecutive ink pixels horizontally from (x,y) in direction step (±1). */
+function hRun(ink: Uint8Array, w: number, h: number, x: number, y: number, step: number): number {
+  let n = 0
+  for (let xx = x; xx >= 0 && xx < w; xx += step) {
+    if (inkAt(ink, w, h, xx, y)) n++
+    else break
+  }
+  return n
+}
+
+/**
+ * Count beams (or flags) stacked at a stem tip: horizontal ink bands beside the
+ * stem near its tip. 1 → quaver, 2 → semiquaver, 3 → demisemiquaver.
+ */
+function countBeams(ink: Uint8Array, w: number, h: number, stem: Stem, sp: number): number {
+  const toNote = -stem.dir // scan from the tip back toward the notehead
+  let bands = 0
+  let inBand = false
+  // Stay near the tip so the notehead's own width is never counted as a beam.
+  const span = Math.min(Math.round(sp * 1.4), Math.max(1, Math.round(stem.len - sp * 0.5)))
+  for (let k = 0; k < span; k++) {
+    const y = stem.tipY + toNote * k
+    if (y < 0 || y >= h) break
+    const run = hRun(ink, w, h, stem.x + 1, y, 1) + hRun(ink, w, h, stem.x - 1, y, -1)
+    const isBeam = run >= sp * 0.7
+    if (isBeam && !inBand) {
+      bands++
+      inBand = true
+    } else if (!isBeam) {
+      inBand = false
+    }
+  }
+  return Math.min(bands, 3)
+}
+
+/**
+ * Open noteheads (half/whole notes) have a hole. Flood-fill the background from
+ * the borders; any background left enclosed is a hole. Notehead-sized round
+ * holes not already covered by a filled notehead mark open noteheads.
+ */
+function findOpenNoteheads(
+  ink: Uint8Array,
+  w: number,
+  h: number,
+  sp: number,
+  filled: Blob[],
+): Blob[] {
+  const outside = new Uint8Array(w * h)
+  const stack: number[] = []
+  const pushIf = (x: number, y: number) => {
+    if (x < 0 || x >= w || y < 0 || y >= h) return
+    const i = y * w + x
+    if (ink[i] === 0 && outside[i] === 0) {
+      outside[i] = 1
+      stack.push(i)
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    pushIf(x, 0)
+    pushIf(x, h - 1)
+  }
+  for (let y = 0; y < h; y++) {
+    pushIf(0, y)
+    pushIf(w - 1, y)
+  }
+  while (stack.length) {
+    const i = stack.pop()!
+    const x = i % w
+    const y = (i / w) | 0
+    pushIf(x - 1, y)
+    pushIf(x + 1, y)
+    pushIf(x, y - 1)
+    pushIf(x, y + 1)
+  }
+
+  const seen = new Uint8Array(w * h)
+  const out: Blob[] = []
+  for (let s = 0; s < w * h; s++) {
+    if (ink[s] === 1 || outside[s] === 1 || seen[s] === 1) continue
+    let minX = w
+    let maxX = 0
+    let minY = h
+    let maxY = 0
+    let area = 0
+    let sx = 0
+    let sy = 0
+    const st = [s]
+    seen[s] = 1
+    while (st.length) {
+      const i = st.pop()!
+      const x = i % w
+      const y = (i / w) | 0
+      area++
+      sx += x
+      sy += y
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+      for (const j of [i - 1, i + 1, i - w, i + w]) {
+        if (j >= 0 && j < w * h && ink[j] === 0 && outside[j] === 0 && seen[j] === 0) {
+          seen[j] = 1
+          st.push(j)
+        }
+      }
+    }
+    const bw = maxX - minX + 1
+    const bh = maxY - minY + 1
+    const dia = (bw + bh) / 2
+    const aspect = bw / bh
+    if (dia >= sp * 0.22 && dia <= sp * 0.75 && aspect > 0.5 && aspect < 2) {
+      const cx = sx / area
+      const cy = sy / area
+      if (!filled.some((f) => Math.hypot(f.x - cx, f.y - cy) < sp * 0.8)) {
+        out.push({ x: cx, y: cy, r: dia / 2 })
+      }
+    }
+  }
+  return out
+}
+
+/** Note-length base from stem/beam analysis. */
+function durationBase(
+  ink: Uint8Array,
+  w: number,
+  h: number,
+  b: Blob,
+  filled: boolean,
+  sp: number,
+): 1 | 2 | 4 | 8 | 16 | 32 {
+  const stem = findStem(ink, w, h, b.x, b.y, b.r, sp)
+  const hasStem = stem.len >= sp * 1.1
+  if (!filled) return hasStem ? 2 : 1 // half or whole
+  if (!hasStem) return 8 // filled, no clear stem → assume quaver
+  const beams = countBeams(ink, w, h, stem, sp)
+  return beams === 0 ? 4 : beams === 1 ? 8 : beams === 2 ? 16 : 32
+}
+
 // -- Pipeline ----------------------------------------------------------------
 
 export function recognize(source: ImageData): OmrResult {
@@ -394,7 +618,7 @@ export function recognize(source: ImageData): OmrResult {
   const sp = staves.reduce((a, s) => a + s.spacing, 0) / staves.length
 
   // Notehead detection.
-  const noStaff = removeStaffLines(ink, w, h)
+  const noStaff = removeStaffLines(ink, w, h, staves, sp)
   const dt = distanceTransform(noStaff, w, h)
   const blobs = findBlobs(dt, w, h, sp * 0.14)
 
@@ -402,10 +626,23 @@ export function recognize(source: ImageData): OmrResult {
   const melodyBlobs = blobs.filter((b) => b.r >= meloR)
   const smallBlobs = blobs.filter((b) => b.r >= sp * 0.15 && b.r < meloR)
 
-  // Build melody notes.
-  const notes: DetectedNote[] = melodyBlobs.map((b) => {
+  // Open (half/whole) noteheads are found separately via their hole.
+  const openBlobs = findOpenNoteheads(noStaff, w, h, sp, melodyBlobs)
+
+  // Build melody notes with a detected duration.
+  const notes: DetectedNote[] = [
+    ...melodyBlobs.map((b) => ({ b, filled: true })),
+    ...openBlobs.map((b) => ({ b, filled: false })),
+  ].map(({ b, filled }) => {
     const staffIndex = nearestStaff(staves, b.y)
-    return { pitch: pitchForY(staves[staffIndex], b.y), x: b.x, y: b.y, staffIndex, graces: [] }
+    return {
+      pitch: pitchForY(staves[staffIndex], b.y),
+      x: b.x,
+      y: b.y,
+      staffIndex,
+      base: durationBase(noStaff, w, h, b, filled, sp),
+      graces: [],
+    }
   })
   notes.sort((a, b) => a.staffIndex - b.staffIndex || a.x - b.x)
 
@@ -432,7 +669,11 @@ export function recognize(source: ImageData): OmrResult {
     for (const n of notes) {
       if (n.staffIndex !== staff) continue
       const dx = n.x - s.x // note is to the right of the gracenote
-      if (dx > -sp * 0.6 && dx < sp * 3.5 && dx < bestDx) {
+      // Gracenotes sit clearly to the LEFT of their note and above / beside it,
+      // never below or on top of it — this rejects stem-tip, beam, and
+      // ring/stem-junction artifacts that fall under the melody line.
+      if (s.y > n.y + sp * 0.9) continue
+      if (dx > sp * 0.35 && dx < sp * 3.5 && dx < bestDx) {
         bestDx = dx
         target = n
       }

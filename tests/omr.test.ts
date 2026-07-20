@@ -16,6 +16,17 @@ function makeImage(w: number, h: number) {
       for (let x = -rx; x <= rx; x++)
         if ((x * x) / (rx * rx) + (y * y) / (ry * ry) <= 1) dark(cx + x, cy + y)
   }
+  const rect = (x0: number, y0: number, wid: number, hei: number) => {
+    for (let y = y0; y < y0 + hei; y++) for (let x = x0; x < x0 + wid; x++) dark(x, y)
+  }
+  const ring = (cx: number, cy: number) => {
+    for (let y = -5; y <= 5; y++)
+      for (let x = -6; x <= 6; x++) {
+        const outer = (x * x) / 36 + (y * y) / 25 <= 1
+        const inner = (x * x) / 12.25 + (y * y) / 6.25 <= 1
+        if (outer && !inner) dark(cx + x, cy + y)
+      }
+  }
   return {
     imageData: { data, width: w, height: h } as unknown as ImageData,
     line: (y: number) => {
@@ -30,6 +41,18 @@ function makeImage(w: number, h: number) {
     },
     head: (cx: number, cy: number) => ellipse(cx, cy, 6, 5), // melody notehead
     grace: (cx: number, cy: number) => ellipse(cx, cy, 3, 2), // small gracenote
+    /** Filled note with a downward stem and `beams` beam bars at the tip. */
+    stemNote: (cx: number, cy: number, beams: number) => {
+      ellipse(cx, cy, 6, 5)
+      rect(cx - 6, cy, 2, 34) // stem down
+      const tip = cy + 34
+      for (let b = 0; b < beams; b++) rect(cx - 6, tip - 2 - b * 4, 14, 2) // beam bars
+    },
+    /** Open (half) note with a downward stem. */
+    openNote: (cx: number, cy: number) => {
+      ring(cx, cy)
+      rect(cx - 6, cy, 2, 34)
+    },
   }
 }
 
@@ -82,6 +105,26 @@ describe('OMR embellishment recognition', () => {
     const d = res.notes.find((n) => n.pitch === 'D')
     expect(d).toBeTruthy()
     expect(d!.embellishment).toBe('doubling')
+  })
+})
+
+describe('OMR duration recognition', () => {
+  it('reads stem/beam counts as crotchet, quaver, semiquaver', () => {
+    const img = staffImage(360)
+    img.stemNote(70, 52, 0) // stem, no beam → crotchet (base 4)
+    img.stemNote(150, 52, 1) // 1 beam → quaver (base 8)
+    img.stemNote(230, 52, 2) // 2 beams → semiquaver (base 16)
+    const res = recognize(img.imageData)
+    const bases = res.notes.sort((a, b) => a.x - b.x).map((n) => n.base)
+    expect(bases).toEqual([4, 8, 16])
+  })
+
+  it('reads an open notehead with a stem as a minim', () => {
+    const img = staffImage()
+    img.openNote(120, 52) // open head + stem → half note (base 2)
+    const res = recognize(img.imageData)
+    expect(res.notes.length).toBe(1)
+    expect(res.notes[0].base).toBe(2)
   })
 })
 
