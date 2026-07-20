@@ -562,3 +562,120 @@ kbd {
     border-radius: 0;
   }
 }
+
+/* ---- Mobile layout ---- */
+.app.mobile .topbar {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  gap: 6px;
+  padding: 6px 8px;
+  -webkit-overflow-scrolling: touch;
+}
+.app.mobile .topbar::-webkit-scrollbar {
+  height: 0;
+}
+.app.mobile .brand {
+  font-size: 14px;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+.app.mobile .tb-group {
+  padding: 0 6px;
+  flex-shrink: 0;
+}
+.app.mobile .topbar button,
+.app.mobile .topbar select,
+.app.mobile .topbar input {
+  flex-shrink: 0;
+}
+.app.mobile .spacer {
+  display: none;
+}
+
+.app.mobile .body {
+  flex-direction: column;
+}
+.app.mobile .score-area {
+  padding: 10px;
+  justify-content: flex-start;
+  -webkit-overflow-scrolling: touch;
+}
+.app.mobile .score-page {
+  min-width: 620px; /* keep notation legible; pan horizontally */
+}
+.app.mobile .statusbar .hints {
+  display: none;
+}
+
+/* Sidebar becomes a non-modal slide-up sheet, leaving the score tappable. */
+.sidebar.as-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  height: 52vh;
+  border-right: none;
+  border-top: 1px solid var(--border);
+  border-radius: 16px 16px 0 0;
+  transform: translateY(102%);
+  transition: transform 240ms ease;
+  z-index: 60;
+  box-shadow: 0 -14px 44px rgba(0, 0, 0, 0.55);
+  padding-bottom: 24px;
+}
+.sidebar.as-sheet.open {
+  transform: translateY(0);
+}
+.sheet-handle {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  padding: 8px 0 8px;
+  margin: -14px -14px 8px;
+  text-align: center;
+  cursor: pointer;
+  border-radius: 16px 16px 0 0;
+}
+.sheet-handle span {
+  display: block;
+  width: 42px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  margin: 0 auto 6px;
+}
+.sheet-title {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+
+.fab {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 50;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 26px;
+  padding: 12px 20px;
+  font-size: 15px;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.fab:hover {
+  background: var(--accent);
+}
+
+/* Bigger touch targets in the sheet */
+.app.mobile .palette button {
+  min-height: 42px;
+  padding: 7px 11px;
+}
+.app.mobile .emb-card {
+  padding: 5px 3px 6px;
+}

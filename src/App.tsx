@@ -8,6 +8,7 @@ import type { EmbellishmentType } from './core/embellishments/registry'
 import { PITCH_LABELS, LOW_A_HZ } from './core/pitch'
 import { EmbellishmentGrid } from './editor/EmbellishmentGrid'
 import { PhotoImport } from './editor/PhotoImport'
+import { useIsMobile } from './editor/useIsMobile'
 import { player } from './audio/player'
 import {
   downloadBww,
@@ -72,6 +73,8 @@ export default function App() {
   const [isPlaying, setIsPlaying] = React.useState(false)
   const [playingAddr, setPlayingAddr] = React.useState<NoteAddress | null>(null)
   const [showPhotoImport, setShowPhotoImport] = React.useState(false)
+  const isMobile = useIsMobile()
+  const [sheetOpen, setSheetOpen] = React.useState(false)
   const layoutRef = React.useRef<ScoreLayout | null>(null)
 
   const selectedNote = s.selection ? getNote(s.score, s.selection) : undefined
@@ -289,7 +292,7 @@ export default function App() {
     : undefined
 
   return (
-    <div className="app">
+    <div className={`app${isMobile ? ' mobile' : ''}`}>
       <div className="topbar">
         <div className="brand">
           pipe<span>Master</span>
@@ -410,7 +413,13 @@ export default function App() {
       </div>
 
       <div className="body">
-        <div className="sidebar">
+        <div className={`sidebar${isMobile ? ' as-sheet' : ''}${isMobile && sheetOpen ? ' open' : ''}`}>
+          {isMobile && (
+            <div className="sheet-handle" onClick={() => setSheetOpen(false)}>
+              <span />
+              <div className="sheet-title">Palette</div>
+            </div>
+          )}
           <div className="side-section">
             <h3>Note length</h3>
             <div className="palette">
@@ -607,6 +616,12 @@ export default function App() {
         </div>
       </div>
 
+      {isMobile && !sheetOpen && (
+        <button className="fab" onClick={() => setSheetOpen(true)} title="Open palette">
+          🎼 Palette
+        </button>
+      )}
+
       {showPhotoImport && (
         <PhotoImport
           timeSig={s.score.timeSig}
@@ -622,10 +637,12 @@ export default function App() {
         <span>
           {selectedNote
             ? `${PITCH_LABELS[selectedNote.pitch]} — bar ${(s.selection?.barIndex ?? 0) + 1}, part ${(s.selection?.partIndex ?? 0) + 1}`
-            : 'Click the staff to add notes; click a note to select it'}
+            : isMobile
+              ? 'Tap the staff to add notes; tap a note to select it'
+              : 'Click the staff to add notes; click a note to select it'}
         </span>
         <span className="spacer" />
-        <span>
+        <span className="hints">
           <kbd>↑↓</kbd> pitch <kbd>←→</kbd> select <kbd>1–6</kbd> length <kbd>.</kbd> dot{' '}
           <kbd>d</kbd> doubling <kbd>g</kbd>/<kbd>e</kbd> grace <kbd>s</kbd> strike <kbd>b</kbd>{' '}
           birl <kbd>r</kbd> grip <kbd>l</kbd> taorluath <kbd>w</kbd> throw <kbd>0</kbd> clear{' '}
