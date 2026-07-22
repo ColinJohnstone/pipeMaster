@@ -717,8 +717,8 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
   // Clef + time signature sit at the start of the line; skip that whole zone.
   const clefZoneX = leftEdge + sp * 6.5
 
-  const meloR = sp * 0.34 * noteheadScale // radius threshold: melody vs smaller
   const meloRMax = sp * 0.85 // reject over-large blobs (clef bowls, etc.)
+  const noteR = sp * 0.34 * noteheadScale // size a stemless blob must reach to be a note
 
   /** A blob is a plausible notehead: right size, on the staff, past the clef. */
   const onStaff = (b: Blob): boolean => {
@@ -758,10 +758,35 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     return kept
   }
 
-  const melodyBlobs = dedupeColumns(
-    blobs.filter((b) => b.r >= meloR && b.r <= meloRMax && onStaff(b)),
-  )
-  const smallBlobs = detectEmb ? blobs.filter((b) => b.r >= sp * 0.15 && b.r < meloR && onStaff(b)) : []
+  /**
+   * Melody note vs gracenote — decided by STEM DIRECTION, not size. In pipe
+   * notation melody stems always point down; a gracenote's thin stem points up
+   * to its beam. That holds even when an embellishment's gracenotes are drawn
+   * nearly as large as a small melody note, which a size threshold alone can't
+   * separate — and it's exactly why gracenotes were leaking into the melody.
+   * (findStem's dir=+1 scans downward in image space, dir=-1 upward.)
+   */
+  const classify = (b: Blob): 'melody' | 'grace' | 'none' => {
+    const stem = findStem(noStaff, w, h, b.x, b.y, b.r, sp)
+    if (stem.dir === -1 && stem.len >= sp * 0.9) return 'grace' // up-stem → gracenote
+    if (stem.dir === 1 && stem.len >= sp * 1.3) return 'melody' // down-stem → melody note
+    // No clear stem: fall back to size. A full-size blob is a real notehead
+    // (e.g. a whole/half note, or one whose stem merged into a beam); a tiny
+    // one is a fragment or gracenote head with no reachable stem — drop it.
+    return b.r >= noteR ? 'melody' : 'none'
+  }
+
+  const melody: Blob[] = []
+  const smalls: Blob[] = [] // gracenotes + augmentation dots, placed by position below
+  for (const b of blobs) {
+    if (!onStaff(b) || b.r > meloRMax) continue
+    // Too small to be a notehead, or notehead-sized but stemless-and-small, or a
+    // gracenote (up-stem): everything that isn't a melody note is a "small".
+    if (b.r >= sp * 0.2 && classify(b) === 'melody') melody.push(b)
+    else smalls.push(b)
+  }
+  const melodyBlobs = dedupeColumns(melody)
+  const smallBlobs = detectEmb ? smalls : []
 
   // Open (half/whole) noteheads are found separately via their hole.
   const openBlobs = findOpenNoteheads(noStaff, w, h, sp, melodyBlobs).filter(onStaff)

@@ -484,13 +484,17 @@ kbd {
 }
 
 .photo-canvas-wrap {
-  position: relative;
   line-height: 0;
-  max-height: 52vh;
+  max-height: 56vh;
   overflow: auto;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: #fff;
+}
+
+.photo-canvas-inner {
+  position: relative;
+  min-width: 100%;
 }
 
 .photo-img,
@@ -502,7 +506,82 @@ kbd {
 
 .photo-overlay {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+}
+
+/* ---- OMR review toolbar ---- */
+.omr-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+}
+.omr-toolbar .omr-spacer {
+  flex: 1;
+}
+.omr-count strong {
+  color: var(--accent);
+  font-size: 14px;
+}
+.omr-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+}
+.omr-legend i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-left: 8px;
+  border: 2px solid;
+}
+.omr-legend i:first-child {
+  margin-left: 0;
+}
+.omr-legend .dot-note {
+  border-color: #16a34a;
+}
+.omr-legend .dot-emb {
+  border-color: #9333ea;
+}
+.omr-legend .dot-sel {
+  border-color: #e11d48;
+  background: rgba(225, 29, 72, 0.25);
+}
+.omr-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.omr-zoom span {
+  min-width: 42px;
+  text-align: center;
+  color: var(--text-dim);
+}
+.omr-toolbar button {
+  padding: 4px 9px;
+}
+
+.omr-nav {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 7px;
+}
+.omr-nav .omr-lbl {
+  width: auto;
+  min-width: 92px;
+  color: var(--accent);
+  font-weight: 600;
+  text-transform: none;
+  font-size: 12.5px;
+  letter-spacing: 0;
+}
+.omr-deselect {
+  margin-left: auto;
 }
 
 .photo-summary {

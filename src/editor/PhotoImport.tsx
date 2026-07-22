@@ -77,6 +77,10 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
   const [selected, setSelected] = React.useState<number | null>(null)
   const [scale, setScale] = React.useState(1)
   const [detectEmb, setDetectEmb] = React.useState(false)
+  const [zoom, setZoom] = React.useState(1)
+  // Undo/redo for manual corrections — adding, deleting and editing notes.
+  const [history, setHistory] = React.useState<DetectedNote[][]>([])
+  const [future, setFuture] = React.useState<DetectedNote[][]>([])
   const imageCanvas = React.useRef<HTMLCanvasElement>(null)
   const overlayCanvas = React.useRef<HTMLCanvasElement>(null)
   const videoRef = React.useRef<HTMLVideoElement>(null)
@@ -219,6 +223,27 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
     runRecognition(c, c.width, c.height)
   }
 
+  // Every manual edit funnels through mutate() so it can be undone.
+  const mutate = (next: DetectedNote[]) => {
+    setHistory((h) => [...h.slice(-49), notes])
+    setFuture([])
+    setNotes(next)
+  }
+  const undo = () => {
+    if (history.length === 0) return
+    setFuture((f) => [notes, ...f])
+    setNotes(history[history.length - 1])
+    setHistory((h) => h.slice(0, -1))
+    setSelected(null)
+  }
+  const redo = () => {
+    if (future.length === 0) return
+    setHistory((h) => [...h, notes])
+    setNotes(future[0])
+    setFuture((f) => f.slice(1))
+    setSelected(null)
+  }
+
   // Click a note to select it, or empty staff to add one (then select it).
   const onOverlayClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!result) return
@@ -234,13 +259,13 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
     const { pitch, staffIndex } = pitchAndStaffAt(result, y)
     const added: DetectedNote = { pitch, x, y, staffIndex, base: 8, graces: [] }
     const next = [...notes, added].sort((a, b) => a.staffIndex - b.staffIndex || a.x - b.x)
-    setNotes(next)
+    mutate(next)
     setSelected(next.indexOf(added))
   }
 
   const updateSelected = (patch: Partial<DetectedNote>) => {
     if (selected === null || !result) return
-    setNotes(notes.map((n, i) => (i === selected ? { ...n, ...patch } : n)))
+    mutate(notes.map((n, i) => (i === selected ? { ...n, ...patch } : n)))
   }
   const setPitch = (pitch: Pitch) => {
     if (selected === null || !result) return
@@ -249,13 +274,20 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
   }
   const deleteSelected = () => {
     if (selected === null) return
-    setNotes(notes.filter((_, i) => i !== selected))
+    mutate(notes.filter((_, i) => i !== selected))
+    setSelected(null)
+  }
+  const clearAll = () => {
+    if (notes.length === 0) return
+    mutate([])
     setSelected(null)
   }
 
   const reDetect = (newScale: number, emb: boolean) => {
     setScale(newScale)
     setDetectEmb(emb)
+    setHistory([])
+    setFuture([])
     if (sourceRef.current) analyse(sourceRef.current, newScale, emb)
   }
 
@@ -263,7 +295,13 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
   React.useEffect(() => {
     if (stage !== 'result') return
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.tagName === 'INPUT') return
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'SELECT') return
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault()
+        e.shiftKey ? redo() : undo()
+        return
+      }
       if (selected === null) return
       if (e.key === 'ArrowRight') setSelected(Math.min(notes.length - 1, selected + 1))
       else if (e.key === 'ArrowLeft') setSelected(Math.max(0, selected - 1))
@@ -276,7 +314,7 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [stage, selected, notes])
+  }, [stage, selected, notes, history, future])
 
   const doImport = async () => {
     if (!result) return
@@ -367,20 +405,76 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
 
         {stage === 'result' && result && !busy && (
           <div className="photo-result">
+            <div className="omr-toolbar">
+              <span className="omr-count">
+                <strong>{notes.length}</strong> notes
+              </span>
+              <span className="omr-legend">
+                <i className="dot-note" /> note
+                <i className="dot-emb" /> embellished
+                <i className="dot-sel" /> selected
+              </span>
+              <span className="omr-spacer" />
+              <div className="omr-zoom">
+                <button onClick={() => setZoom((z) => Math.max(1, Math.round((z - 0.5) * 2) / 2))} title="Zoom out">
+                  −
+                </button>
+                <span>{Math.round(zoom * 100)}%</span>
+                <button onClick={() => setZoom((z) => Math.min(4, Math.round((z + 0.5) * 2) / 2))} title="Zoom in">
+                  +
+                </button>
+                <button onClick={() => setZoom(1)} title="Fit width" disabled={zoom === 1}>
+                  Fit
+                </button>
+              </div>
+              <button onClick={undo} disabled={history.length === 0} title="Undo (⌘Z)">
+                ↶ Undo
+              </button>
+              <button onClick={redo} disabled={future.length === 0} title="Redo (⇧⌘Z)">
+                ↷ Redo
+              </button>
+              <button className="omr-del" onClick={clearAll} disabled={notes.length === 0} title="Remove all notes">
+                Clear
+              </button>
+            </div>
             <div className="photo-canvas-wrap">
-              <canvas ref={imageCanvas} className="photo-img" />
-              <canvas
-                ref={overlayCanvas}
-                className="photo-overlay"
-                style={{ cursor: 'crosshair', pointerEvents: 'auto' }}
-                onClick={onOverlayClick}
-              />
+              <div className="photo-canvas-inner" style={{ width: `${zoom * 100}%` }}>
+                <canvas ref={imageCanvas} className="photo-img" />
+                <canvas
+                  ref={overlayCanvas}
+                  className="photo-overlay"
+                  style={{ cursor: 'crosshair', pointerEvents: 'auto' }}
+                  onClick={onOverlayClick}
+                />
+              </div>
             </div>
 
             {/* Per-note editor */}
             <div className="omr-editor">
               {sel ? (
                 <>
+                  <div className="omr-row omr-nav">
+                    <span className="omr-lbl">
+                      Note {(selected ?? 0) + 1} / {notes.length}
+                    </span>
+                    <button
+                      onClick={() => setSelected(Math.max(0, (selected ?? 0) - 1))}
+                      disabled={(selected ?? 0) <= 0}
+                      title="Previous note (←)"
+                    >
+                      ‹ Prev
+                    </button>
+                    <button
+                      onClick={() => setSelected(Math.min(notes.length - 1, (selected ?? 0) + 1))}
+                      disabled={(selected ?? 0) >= notes.length - 1}
+                      title="Next note (→)"
+                    >
+                      Next ›
+                    </button>
+                    <button className="omr-deselect" onClick={() => setSelected(null)} title="Deselect">
+                      Done
+                    </button>
+                  </div>
                   <div className="omr-row omr-pitch">
                     <span className="omr-lbl">Pitch</span>
                     {PITCHES.map((p) => (
