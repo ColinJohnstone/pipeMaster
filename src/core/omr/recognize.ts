@@ -430,6 +430,10 @@ function findStem(
     Math.round(nx + r * 0.8),
     Math.round(nx - sp * 0.5),
     Math.round(nx + sp * 0.5),
+    // The stem often attaches at the notehead's outer edge (~0.6 sp from centre);
+    // sampling there catches down-stems that the inner columns miss → better recall.
+    Math.round(nx - sp * 0.62),
+    Math.round(nx + sp * 0.62),
     Math.round(nx),
   ]
   for (const sx of cols) {

@@ -86,6 +86,14 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
   const videoRef = React.useRef<HTMLVideoElement>(null)
   const streamRef = React.useRef<MediaStream | null>(null)
   const sourceRef = React.useRef<ImageData | null>(null)
+  // Live state for a drag-to-reposition gesture on the overlay.
+  const dragRef = React.useRef<{
+    i: number // index of the note being dragged, or -1 for an empty-staff press
+    startX: number
+    startY: number
+    moved: boolean
+    snapshot: DetectedNote[] // notes before the drag, for a single undo step
+  } | null>(null)
 
   const stopCamera = React.useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop())
@@ -244,23 +252,60 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
     setSelected(null)
   }
 
-  // Click a note to select it, or empty staff to add one (then select it).
-  const onOverlayClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!result) return
+  const toCanvas = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const oc = overlayCanvas.current!
     const rect = oc.getBoundingClientRect()
-    const x = ((e.clientX - rect.left) / rect.width) * oc.width
-    const y = ((e.clientY - rect.top) / rect.height) * oc.height
-    const hit = notes.findIndex((n) => Math.hypot(n.x - x, n.y - y) < spacing * 1.1)
-    if (hit >= 0) {
-      setSelected(hit)
-      return
+    return {
+      x: ((e.clientX - rect.left) / rect.width) * oc.width,
+      y: ((e.clientY - rect.top) / rect.height) * oc.height,
     }
+  }
+
+  // Press on a note to grab it, or on empty staff to (later) add one. Dragging a
+  // note moves it horizontally and snaps its pitch to wherever you release.
+  const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!result) return
+    const { x, y } = toCanvas(e)
+    const i = notes.findIndex((n) => Math.hypot(n.x - x, n.y - y) < spacing * 1.1)
+    dragRef.current = { i, startX: x, startY: y, moved: false, snapshot: notes }
+    if (i >= 0) setSelected(i)
+    overlayCanvas.current?.setPointerCapture(e.pointerId)
+  }
+
+  const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const d = dragRef.current
+    if (!d || !result || d.i < 0) return
+    const { x, y } = toCanvas(e)
+    if (!d.moved && Math.hypot(x - d.startX, y - d.startY) < spacing * 0.5) return
+    d.moved = true
     const { pitch, staffIndex } = pitchAndStaffAt(result, y)
-    const added: DetectedNote = { pitch, x, y, staffIndex, base: 8, graces: [] }
-    const next = [...notes, added].sort((a, b) => a.staffIndex - b.staffIndex || a.x - b.x)
-    mutate(next)
-    setSelected(next.indexOf(added))
+    const snapY = yForPitch(result, staffIndex, pitch)
+    setNotes((prev) => prev.map((n, idx) => (idx === d.i ? { ...n, x, pitch, staffIndex, y: snapY } : n)))
+  }
+
+  const onPointerUp = () => {
+    const d = dragRef.current
+    dragRef.current = null
+    if (!d || !result) return
+    if (d.moved && d.i >= 0) {
+      // A completed drag: record the pre-drag notes as one undo step, then
+      // re-sort so the moved note keeps left-to-right order.
+      setHistory((h) => [...h.slice(-49), d.snapshot])
+      setFuture([])
+      setNotes((prev) => {
+        const moved = prev[d.i]
+        const sorted = [...prev].sort((a, b) => a.staffIndex - b.staffIndex || a.x - b.x)
+        setSelected(sorted.indexOf(moved))
+        return sorted
+      })
+    } else if (d.i < 0) {
+      // A tap on empty staff: add a quaver at that pitch and select it.
+      const { pitch, staffIndex } = pitchAndStaffAt(result, d.startY)
+      const added: DetectedNote = { pitch, x: d.startX, y: d.startY, staffIndex, base: 8, graces: [] }
+      const next = [...notes, added].sort((a, b) => a.staffIndex - b.staffIndex || a.x - b.x)
+      mutate(next)
+      setSelected(next.indexOf(added))
+    }
   }
 
   const updateSelected = (patch: Partial<DetectedNote>) => {
@@ -443,8 +488,10 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
                 <canvas
                   ref={overlayCanvas}
                   className="photo-overlay"
-                  style={{ cursor: 'crosshair', pointerEvents: 'auto' }}
-                  onClick={onOverlayClick}
+                  style={{ cursor: 'crosshair', pointerEvents: 'auto', touchAction: 'none' }}
+                  onPointerDown={onPointerDown}
+                  onPointerMove={onPointerMove}
+                  onPointerUp={onPointerUp}
                 />
               </div>
             </div>
@@ -529,8 +576,9 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
                 </>
               ) : (
                 <p className="omr-hint">
-                  <strong>Tap a note</strong> to change its pitch/length/embellishment, or tap the
-                  staff to add one. ←/→ select, ↑/↓ change pitch.
+                  <strong>Tap a note</strong> to change its pitch/length/embellishment,{' '}
+                  <strong>drag a note</strong> to move it and snap its pitch, or tap the staff to add
+                  one. ←/→ select, ↑/↓ change pitch, ⌘Z undo.
                 </p>
               )}
             </div>
