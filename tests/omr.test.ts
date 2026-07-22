@@ -143,6 +143,19 @@ describe('OMR rejects non-notes (clef, time signature, page text)', () => {
     expect(res.notes.length).toBe(2)
     expect(res.notes.map((n) => n.pitch)).toEqual(['B', 'D'])
   })
+
+  it('ignores the time signature (two stacked digits) at the start of the first staff', () => {
+    const img = staffImage(360)
+    // A metre like 6/8: two stemless, similar-sized blobs stacked at the start,
+    // just past the clef zone (x≥78). These must not be read as noteheads.
+    img.head(86, 52) // upper digit
+    img.head(86, 76) // lower digit
+    // Real notes further along.
+    img.head(170, 64) // B
+    img.head(250, 52) // D
+    const res = recognize(img.imageData)
+    expect(res.notes.map((n) => n.pitch)).toEqual(['B', 'D'])
+  })
 })
 
 describe('OMR deskew', () => {

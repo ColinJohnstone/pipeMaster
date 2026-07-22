@@ -605,7 +605,7 @@ export interface RecognizeOptions {
    * noteheads (catch missed notes); > 1 detects fewer (drop spurious ones).
    */
   noteheadScale?: number
-  /** Also detect gracenotes/embellishments. Off by default (notes + rhythm). */
+  /** Detect gracenotes/embellishments and attach them to melody notes. On by default. */
   detectEmbellishments?: boolean
 }
 
@@ -642,7 +642,7 @@ export function yForPitch(result: Pick<OmrResult, 'staves'>, staffIndex: number,
 export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrResult {
   const warnings: string[] = []
   const noteheadScale = opts.noteheadScale ?? 1
-  const detectEmb = opts.detectEmbellishments ?? false
+  const detectEmb = opts.detectEmbellishments ?? true
 
   // Downscale wide images for speed. Use BOX AVERAGING (not nearest-neighbour)
   // so thin staff lines survive as gray rather than being dropped between rows.
@@ -722,7 +722,6 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
   const clefZoneX = leftEdge + sp * 6.5
 
   const meloRMax = sp * 0.85 // reject over-large blobs (clef bowls, etc.)
-  const noteR = sp * 0.34 * noteheadScale // size a stemless blob must reach to be a note
 
   /** A blob is a plausible notehead: right size, on the staff, past the clef. */
   const onStaff = (b: Blob): boolean => {
@@ -762,32 +761,77 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     return kept
   }
 
-  /**
-   * Melody note vs gracenote — decided by STEM DIRECTION, not size. In pipe
-   * notation melody stems always point down; a gracenote's thin stem points up
-   * to its beam. That holds even when an embellishment's gracenotes are drawn
-   * nearly as large as a small melody note, which a size threshold alone can't
-   * separate — and it's exactly why gracenotes were leaking into the melody.
-   * (findStem's dir=+1 scans downward in image space, dir=-1 upward.)
-   */
-  const classify = (b: Blob): 'melody' | 'grace' | 'none' => {
-    const stem = findStem(noStaff, w, h, b.x, b.y, b.r, sp)
-    if (stem.dir === -1 && stem.len >= sp * 0.9) return 'grace' // up-stem → gracenote
-    if (stem.dir === 1 && stem.len >= sp * 1.3) return 'melody' // down-stem → melody note
-    // No clear stem: fall back to size. A full-size blob is a real notehead
-    // (e.g. a whole/half note, or one whose stem merged into a beam); a tiny
-    // one is a fragment or gracenote head with no reachable stem — drop it.
-    return b.r >= noteR ? 'melody' : 'none'
+  // Stem lookup, memoised — findStem is the workhorse for every classification
+  // below. dir=+1 scans downward in image space, dir=-1 upward.
+  const stems = new Map<Blob, Stem>()
+  const stemOf = (b: Blob): Stem => {
+    let s = stems.get(b)
+    if (!s) {
+      s = findStem(noStaff, w, h, b.x, b.y, b.r, sp)
+      stems.set(b, s)
+    }
+    return s
+  }
+  const hasDownStem = (b: Blob) => stemOf(b).dir === 1 && stemOf(b).len >= sp * 1.3
+  const hasUpStem = (b: Blob) => stemOf(b).dir === -1 && stemOf(b).len >= sp * 0.9
+  const stemless = (b: Blob) => stemOf(b).len < sp * 0.8
+
+  // --- Time signature -------------------------------------------------------
+  // The metre digits (6-over-8, 2-over-4, …) sit at the start of the first
+  // staff and read as two stacked "noteheads". Digits have NO stem, so a pair
+  // of stemless, similar-sized blobs stacked at the system start is the time
+  // signature — and this can never be a real note (down-stem) or gracenote
+  // (up-stem). Rejecting it here stops it polluting the melody.
+  const timeSig = new Set<Blob>()
+  {
+    const start = blobs.filter(
+      (b) =>
+        onStaff(b) &&
+        b.x < leftEdge + sp * 8 &&
+        nearestStaff(staves, b.y) === 0 &&
+        b.r >= sp * 0.25 &&
+        stemless(b),
+    )
+    for (let i = 0; i < start.length; i++)
+      for (let j = i + 1; j < start.length; j++) {
+        const a = start[i]
+        const b = start[j]
+        const sim = Math.min(a.r, b.r) / Math.max(a.r, b.r)
+        if (Math.abs(a.x - b.x) < sp * 0.7 && Math.abs(a.y - b.y) > sp * 1.2 && Math.abs(a.y - b.y) < sp * 3.4 && sim > 0.6) {
+          timeSig.add(a)
+          timeSig.add(b)
+        }
+      }
+  }
+
+  // --- Melody vs gracenote --------------------------------------------------
+  // Primary signal is STEM DIRECTION (melody down, gracenote up). But on a photo
+  // a gracenote's thin stem can be lost to downscaling, so we also calibrate the
+  // melody-notehead size from the notes that clearly DO have a down-stem, then
+  // treat markedly smaller stemless blobs as gracenotes. Relative size adapts to
+  // any scan resolution, unlike a fixed radius threshold.
+  // Notehead-sized candidates only (≥0.2 sp) — smaller blobs are dots or the
+  // thin edges of a ring (open notehead) and must not be promoted to melody.
+  const cands = blobs.filter((b) => onStaff(b) && !timeSig.has(b) && b.r >= sp * 0.2 && b.r <= meloRMax)
+  const downRadii = cands
+    .filter(hasDownStem)
+    .map((b) => b.r)
+    .sort((a, b) => a - b)
+  const melodyR = downRadii.length ? downRadii[downRadii.length >> 1] : sp * 0.42
+  const graceR = melodyR * 0.72 * noteheadScale // below this (and no down-stem) → gracenote
+
+  const isMelody = (b: Blob): boolean => {
+    if (hasUpStem(b)) return false // up-stem → gracenote
+    if (hasDownStem(b)) return true // down-stem → melody note
+    return b.r >= graceR // stemless: melody only if full-sized (else gracenote / dot)
   }
 
   const melody: Blob[] = []
   const smalls: Blob[] = [] // gracenotes + augmentation dots, placed by position below
+  for (const b of cands) (isMelody(b) ? melody : smalls).push(b)
+  // Augmentation dots are smaller than gracenotes; add them for the dot pass.
   for (const b of blobs) {
-    if (!onStaff(b) || b.r > meloRMax) continue
-    // Too small to be a notehead, or notehead-sized but stemless-and-small, or a
-    // gracenote (up-stem): everything that isn't a melody note is a "small".
-    if (b.r >= sp * 0.2 && classify(b) === 'melody') melody.push(b)
-    else smalls.push(b)
+    if (onStaff(b) && !timeSig.has(b) && b.r >= sp * 0.12 && b.r < sp * 0.2) smalls.push(b)
   }
   const melodyBlobs = dedupeColumns(melody)
   const smallBlobs = detectEmb ? smalls : []

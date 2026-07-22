@@ -76,7 +76,6 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
   const [notes, setNotes] = React.useState<DetectedNote[]>([])
   const [selected, setSelected] = React.useState<number | null>(null)
   const [scale, setScale] = React.useState(1)
-  const [detectEmb, setDetectEmb] = React.useState(false)
   const [zoom, setZoom] = React.useState(1)
   // Undo/redo for manual corrections — adding, deleting and editing notes.
   const [history, setHistory] = React.useState<DetectedNote[][]>([])
@@ -106,20 +105,17 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
     return result.staves.reduce((a, s) => a + s.spacing, 0) / result.staves.length
   }, [result])
 
-  const analyse = React.useCallback(
-    (imageData: ImageData, noteheadScale: number, embellishments: boolean) => {
-      setBusy(true)
-      setSelected(null)
-      setTimeout(() => {
-        const res = recognize(imageData, { noteheadScale, detectEmbellishments: embellishments })
-        setResult(res)
-        setNotes(res.notes)
-        setStage('result')
-        setBusy(false)
-      }, 30)
-    },
-    [],
-  )
+  const analyse = React.useCallback((imageData: ImageData, noteheadScale: number) => {
+    setBusy(true)
+    setSelected(null)
+    setTimeout(() => {
+      const res = recognize(imageData, { noteheadScale, detectEmbellishments: true })
+      setResult(res)
+      setNotes(res.notes)
+      setStage('result')
+      setBusy(false)
+    }, 30)
+  }, [])
 
   const runRecognition = React.useCallback(
     (img: HTMLImageElement | HTMLCanvasElement, w: number, h: number) => {
@@ -131,9 +127,9 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
       const imageData = octx.getImageData(0, 0, w, h)
       sourceRef.current = imageData
       setScale(1)
-      analyse(imageData, 1, detectEmb)
+      analyse(imageData, 1)
     },
-    [analyse, detectEmb],
+    [analyse],
   )
 
   // Redraw the image, note markers, and pitch labels on every change.
@@ -328,12 +324,11 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
     setSelected(null)
   }
 
-  const reDetect = (newScale: number, emb: boolean) => {
+  const reDetect = (newScale: number) => {
     setScale(newScale)
-    setDetectEmb(emb)
     setHistory([])
     setFuture([])
-    if (sourceRef.current) analyse(sourceRef.current, newScale, emb)
+    if (sourceRef.current) analyse(sourceRef.current, newScale)
   }
 
   // Keyboard: ←/→ move selection, ↑/↓ change pitch, Delete removes.
@@ -592,13 +587,9 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
                   max={1.6}
                   step={0.1}
                   value={scale}
-                  onChange={(e) => reDetect(Number(e.target.value), detectEmb)}
+                  onChange={(e) => reDetect(Number(e.target.value))}
                 />
                 <span>{scale < 1 ? 'more notes' : scale > 1 ? 'fewer notes' : 'default'}</span>
-              </label>
-              <label className="photo-check">
-                <input type="checkbox" checked={detectEmb} onChange={(e) => reDetect(scale, e.target.checked)} />
-                Also detect embellishments (experimental)
               </label>
               <div className="photo-actions">
                 <button className="primary" disabled={notes.length === 0} onClick={doImport}>
