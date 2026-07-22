@@ -98,8 +98,11 @@ export function parseHeader(data: unknown): OcrHeader {
     /\b(P\/?M|Pipe\s*Major|Comp\.?|composed|arr\.?|arranged)\b/i.test(t) ||
     /^[A-Z]\.?\s*[A-Z][a-z]+/.test(t) ||
     /\b[A-Z]\.\s*[A-Z]/.test(t)
-  const title = [...lines].filter((l) => !isCredit(l.text)).sort((a, b) => b.h - a.h)[0]
-  if (title && title.text.length >= 2) out.title = title.text
+  // Require a real word (≥3 letters) so OCR noise on a blank strip isn't a title.
+  const title = [...lines]
+    .filter((l) => !isCredit(l.text) && /[A-Za-z]{3,}/.test(l.text))
+    .sort((a, b) => b.h - a.h)[0]
+  if (title) out.title = title.text
 
   // Composer: a name-ish line that isn't the title. When the type/metre credit
   // and the composer share a baseline, OCR merges them into one line (e.g.
