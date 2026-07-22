@@ -175,6 +175,20 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
     const ctx = oc.getContext('2d')!
     ctx.clearRect(0, 0, result.width, result.height)
     ctx.textAlign = 'center'
+    // Detected gracenotes (amber), drawn under the melody markers. These are the
+    // little notes that make up embellishments — shown so you can see what was
+    // read, distinct from the melody notes.
+    ctx.fillStyle = 'rgba(245,158,11,0.85)'
+    ctx.strokeStyle = '#b45309'
+    ctx.lineWidth = 1
+    notes.forEach((n) => {
+      n.graces.forEach((g) => {
+        ctx.beginPath()
+        ctx.ellipse(g.x, g.y, 4, 3.5, 0, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+      })
+    })
     notes.forEach((n, i) => {
       const isSel = i === selected
       // Marker.
@@ -503,6 +517,7 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
               </span>
               <span className="omr-legend">
                 <i className="dot-note" /> note
+                <i className="dot-grace" /> gracenote
                 <i className="dot-emb" /> embellished
                 <i className="dot-sel" /> selected
               </span>
