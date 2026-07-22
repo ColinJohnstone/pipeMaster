@@ -556,6 +556,63 @@ kbd {
   accent-color: var(--accent);
 }
 
+/* ---- OMR per-note editor ---- */
+.modal.modal-wide {
+  width: min(1000px, 100%);
+}
+
+.omr-editor {
+  margin: 10px 0;
+  padding: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-height: 96px;
+}
+
+.omr-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 7px;
+}
+.omr-row:last-child {
+  margin-bottom: 0;
+}
+
+.omr-lbl {
+  width: 108px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.omr-row button {
+  min-width: 40px;
+  padding: 5px 9px;
+}
+.omr-pitch button {
+  min-width: 34px;
+  padding: 5px 6px;
+  font-weight: 600;
+}
+
+.omr-del {
+  margin-left: auto;
+  color: #f87171;
+  border-color: #7f1d1d !important;
+}
+
+.omr-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
 .linkish {
   background: none;
   border: none;

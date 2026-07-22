@@ -1,16 +1,24 @@
 import React from 'react'
-import { recognize, pitchAndStaffAt, type OmrResult, type DetectedNote } from '../core/omr/recognize'
+import {
+  recognize,
+  pitchAndStaffAt,
+  yForPitch,
+  type OmrResult,
+  type DetectedNote,
+} from '../core/omr/recognize'
 import { omrToScore } from '../core/omr/toScore'
 import { saveOmrExample, downloadOmrDataset } from '../persistence/idb'
+import { PITCHES, type Pitch } from '../core/pitch'
+import { EMBELLISHMENTS, type EmbellishmentType } from '../core/embellishments/registry'
 import type { Score } from '../core/model/types'
-import type { TimeSig } from '../core/duration'
+import type { Duration, TimeSig } from '../core/duration'
 
 /**
  * Take/upload a photo (or PDF page) of pipe music and turn it into a draft.
- * After the first automatic guess you can correct it — tap a wrong notehead to
- * remove it, tap the staff to add a missed one, and nudge the detection
- * sensitivity to re-run. Your corrections both fix this import and are saved as
- * labelled examples to improve recognition over time.
+ * Recognition is imperfect, so the review screen is a full note-by-note editor:
+ * each detected note is labelled with its pitch above the image, and you can
+ * select a note to change its pitch, length or embellishment, remove it, or tap
+ * the staff to add a missed one. Corrections are saved as labelled examples.
  */
 
 interface Props {
@@ -21,7 +29,23 @@ interface Props {
 
 type Stage = 'choose' | 'camera' | 'result'
 
-const DUR: Record<number, string> = { 1: '𝅝', 2: '𝅗𝅥', 4: '♩', 8: '♪', 16: '𝅘𝅥𝅯', 32: '𝅘𝅥𝅰' }
+const PITCH_SHORT: Record<Pitch, string> = {
+  LowG: 'LG',
+  LowA: 'LA',
+  B: 'B',
+  C: 'C',
+  D: 'D',
+  E: 'E',
+  F: 'F',
+  HighG: 'HG',
+  HighA: 'HA',
+}
+const LENGTHS: Array<{ base: Duration['base']; label: string }> = [
+  { base: 2, label: '𝅗𝅥' },
+  { base: 4, label: '♩' },
+  { base: 8, label: '♪' },
+  { base: 16, label: '𝅘𝅥𝅯' },
+]
 
 /** Rasterise the first page of a PDF to a canvas — pdf.js is loaded on demand. */
 async function rasterizePdf(file: File): Promise<HTMLCanvasElement> {
@@ -32,7 +56,6 @@ async function rasterizePdf(file: File): Promise<HTMLCanvasElement> {
   const buf = await file.arrayBuffer()
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise
   const page = await pdf.getPage(1)
-  // Render at ~1500px wide for a good OMR resolution.
   const base = page.getViewport({ scale: 1 })
   const scale = Math.min(3, Math.max(1, 1500 / base.width))
   const viewport = page.getViewport({ scale })
@@ -51,6 +74,7 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
   const [busy, setBusy] = React.useState(false)
   const [result, setResult] = React.useState<OmrResult | null>(null)
   const [notes, setNotes] = React.useState<DetectedNote[]>([])
+  const [selected, setSelected] = React.useState<number | null>(null)
   const [scale, setScale] = React.useState(1)
   const [detectEmb, setDetectEmb] = React.useState(false)
   const imageCanvas = React.useRef<HTMLCanvasElement>(null)
@@ -65,7 +89,6 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
   }, [])
   React.useEffect(() => () => stopCamera(), [stopCamera])
 
-  /** Median staff spacing, used for hit-testing and default note size. */
   const spacing = React.useMemo(() => {
     if (!result || result.staves.length === 0) return 14
     return result.staves.reduce((a, s) => a + s.spacing, 0) / result.staves.length
@@ -74,11 +97,9 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
   const analyse = React.useCallback(
     (imageData: ImageData, noteheadScale: number, embellishments: boolean) => {
       setBusy(true)
+      setSelected(null)
       setTimeout(() => {
-        const res = recognize(imageData, {
-          noteheadScale,
-          detectEmbellishments: embellishments,
-        })
+        const res = recognize(imageData, { noteheadScale, detectEmbellishments: embellishments })
         setResult(res)
         setNotes(res.notes)
         setStage('result')
@@ -103,7 +124,7 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
     [analyse, detectEmb],
   )
 
-  // Redraw the image + overlay whenever the result or edited notes change.
+  // Redraw the image, note markers, and pitch labels on every change.
   React.useEffect(() => {
     if (stage !== 'result' || !result) return
     const ic = imageCanvas.current
@@ -126,41 +147,31 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
 
     const ctx = oc.getContext('2d')!
     ctx.clearRect(0, 0, result.width, result.height)
-    ctx.strokeStyle = 'rgba(76,141,255,0.4)'
-    ctx.lineWidth = 1
-    for (const s of result.staves) {
-      for (const ly of s.lines) {
-        ctx.beginPath()
-        ctx.moveTo(0, ly)
-        ctx.lineTo(result.width, ly)
-        ctx.stroke()
-      }
-    }
-    for (const n of notes) {
-      for (const g of n.graces) {
-        ctx.beginPath()
-        ctx.fillStyle = 'rgba(59,130,246,0.45)'
-        ctx.strokeStyle = '#2563eb'
-        ctx.lineWidth = 1
-        ctx.ellipse(g.x, g.y, 3.5, 3, 0, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.stroke()
-      }
-    }
-    ctx.font = '11px sans-serif'
     ctx.textAlign = 'center'
-    for (const n of notes) {
+    notes.forEach((n, i) => {
+      const isSel = i === selected
+      // Marker.
       ctx.beginPath()
-      ctx.fillStyle = n.embellishment ? 'rgba(168,85,247,0.3)' : 'rgba(34,197,94,0.35)'
-      ctx.strokeStyle = n.embellishment ? '#9333ea' : '#16a34a'
-      ctx.lineWidth = 1.5
-      ctx.ellipse(n.x, n.y, 6, 5, 0, 0, Math.PI * 2)
+      ctx.lineWidth = isSel ? 2.5 : 1.5
+      ctx.strokeStyle = isSel ? '#e11d48' : n.embellishment ? '#9333ea' : '#16a34a'
+      ctx.fillStyle = isSel ? 'rgba(225,29,72,0.18)' : 'transparent'
+      ctx.ellipse(n.x, n.y, 7, 6, 0, 0, Math.PI * 2)
       ctx.fill()
       ctx.stroke()
-      ctx.fillStyle = '#b45309'
-      ctx.fillText((DUR[n.base] ?? '') + (n.dotted ? '.' : ''), n.x, n.y - 9)
-    }
-  }, [stage, result, notes])
+      // Pitch label above the note.
+      const label = PITCH_SHORT[n.pitch] + (n.embellishment ? '·' + shortEmb(n.embellishment) : '')
+      const ly = Math.max(12, n.y - spacing * 2.2)
+      ctx.font = `bold ${Math.round(spacing * 1.3)}px sans-serif`
+      const tw = ctx.measureText(label).width
+      ctx.fillStyle = isSel ? '#e11d48' : '#1d4ed8'
+      ctx.globalAlpha = 0.9
+      ctx.fillStyle = '#fff'
+      ctx.fillRect(n.x - tw / 2 - 2, ly - spacing * 1.3, tw + 4, spacing * 1.5)
+      ctx.globalAlpha = 1
+      ctx.fillStyle = isSel ? '#e11d48' : '#1d4ed8'
+      ctx.fillText(label, n.x, ly)
+    })
+  }, [stage, result, notes, selected, spacing])
 
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -208,22 +219,38 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
     runRecognition(c, c.width, c.height)
   }
 
-  // Tap the overlay to add a note, or tap a detected note to remove it.
+  // Click a note to select it, or empty staff to add one (then select it).
   const onOverlayClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!result) return
     const oc = overlayCanvas.current!
     const rect = oc.getBoundingClientRect()
     const x = ((e.clientX - rect.left) / rect.width) * oc.width
     const y = ((e.clientY - rect.top) / rect.height) * oc.height
-
-    const hit = notes.findIndex((n) => Math.hypot(n.x - x, n.y - y) < spacing * 0.8)
+    const hit = notes.findIndex((n) => Math.hypot(n.x - x, n.y - y) < spacing * 1.1)
     if (hit >= 0) {
-      setNotes(notes.filter((_, i) => i !== hit))
+      setSelected(hit)
       return
     }
     const { pitch, staffIndex } = pitchAndStaffAt(result, y)
     const added: DetectedNote = { pitch, x, y, staffIndex, base: 8, graces: [] }
-    setNotes([...notes, added].sort((a, b) => a.staffIndex - b.staffIndex || a.x - b.x))
+    const next = [...notes, added].sort((a, b) => a.staffIndex - b.staffIndex || a.x - b.x)
+    setNotes(next)
+    setSelected(next.indexOf(added))
+  }
+
+  const updateSelected = (patch: Partial<DetectedNote>) => {
+    if (selected === null || !result) return
+    setNotes(notes.map((n, i) => (i === selected ? { ...n, ...patch } : n)))
+  }
+  const setPitch = (pitch: Pitch) => {
+    if (selected === null || !result) return
+    const n = notes[selected]
+    updateSelected({ pitch, y: yForPitch(result, n.staffIndex, pitch) })
+  }
+  const deleteSelected = () => {
+    if (selected === null) return
+    setNotes(notes.filter((_, i) => i !== selected))
+    setSelected(null)
   }
 
   const reDetect = (newScale: number, emb: boolean) => {
@@ -232,9 +259,27 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
     if (sourceRef.current) analyse(sourceRef.current, newScale, emb)
   }
 
+  // Keyboard: ←/→ move selection, ↑/↓ change pitch, Delete removes.
+  React.useEffect(() => {
+    if (stage !== 'result') return
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === 'INPUT') return
+      if (selected === null) return
+      if (e.key === 'ArrowRight') setSelected(Math.min(notes.length - 1, selected + 1))
+      else if (e.key === 'ArrowLeft') setSelected(Math.max(0, selected - 1))
+      else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault()
+        const idx = PITCHES.indexOf(notes[selected].pitch)
+        const ni = Math.max(0, Math.min(PITCHES.length - 1, idx + (e.key === 'ArrowUp' ? 1 : -1)))
+        setPitch(PITCHES[ni])
+      } else if (e.key === 'Delete' || e.key === 'Backspace') deleteSelected()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [stage, selected, notes])
+
   const doImport = async () => {
     if (!result) return
-    // Save this corrected page as a labelled example (best-effort).
     try {
       const png = imageCanvas.current?.toDataURL('image/png') ?? ''
       await saveOmrExample({
@@ -252,17 +297,17 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
         })),
       })
     } catch {
-      /* storage is best-effort */
+      /* best-effort */
     }
     onImport(omrToScore(notes, timeSig, 'Imported from photo'))
     onClose()
   }
 
-  const embCount = notes.filter((n) => n.embellishment).length
+  const sel = selected !== null ? notes[selected] : null
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h2>Import from photo or PDF</h2>
           <button className="modal-x" onClick={onClose} title="Close">
@@ -273,11 +318,10 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
         {stage === 'choose' && (
           <div className="photo-choose">
             <p className="photo-intro">
-              Take or upload a photo (or a PDF page) of printed pipe music. pipeMaster straightens
-              the page, finds the staves, and reads the <strong>notes and their lengths</strong>{' '}
-              (clef, time signature and page text are ignored). It won't be perfect — so on the next
-              screen you can <strong>tap to add or remove notes</strong> and tune the sensitivity
-              before importing. Works best on a sharp, high-contrast image cropped to the music.
+              Take or upload a photo (or a PDF page) of printed pipe music. pipeMaster finds the
+              staves and reads the notes. It won't be perfect — so on the next screen every note is
+              labelled with its pitch, and you can <strong>tap a note to fix its pitch, length or
+              embellishment</strong>, tap the staff to add a missed one, or remove wrong ones.
             </p>
             <div className="photo-actions">
               <button className="primary" onClick={startCamera}>
@@ -289,7 +333,7 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
               </label>
             </div>
             <p className="photo-note">
-              Corrections you make are saved on this device to help improve recognition.{' '}
+              Corrections are saved on this device to help improve recognition.{' '}
               <button
                 className="linkish"
                 onClick={() => downloadOmrDataset().then((n) => n === 0 && alert('No examples saved yet.'))}
@@ -332,13 +376,72 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
                 onClick={onOverlayClick}
               />
             </div>
+
+            {/* Per-note editor */}
+            <div className="omr-editor">
+              {sel ? (
+                <>
+                  <div className="omr-row omr-pitch">
+                    <span className="omr-lbl">Pitch</span>
+                    {PITCHES.map((p) => (
+                      <button
+                        key={p}
+                        className={sel.pitch === p ? 'active' : ''}
+                        onClick={() => setPitch(p)}
+                      >
+                        {PITCH_SHORT[p]}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="omr-row">
+                    <span className="omr-lbl">Length</span>
+                    {LENGTHS.map((l) => (
+                      <button
+                        key={l.base}
+                        className={sel.base === l.base ? 'active' : ''}
+                        onClick={() => updateSelected({ base: l.base })}
+                      >
+                        {l.label}
+                      </button>
+                    ))}
+                    <button
+                      className={sel.dotted ? 'active' : ''}
+                      onClick={() => updateSelected({ dotted: !sel.dotted })}
+                    >
+                      •
+                    </button>
+                  </div>
+                  <div className="omr-row">
+                    <span className="omr-lbl">Embellishment</span>
+                    <select
+                      value={sel.embellishment ?? ''}
+                      onChange={(e) =>
+                        updateSelected({
+                          embellishment: e.target.value ? (e.target.value as EmbellishmentType) : undefined,
+                        })
+                      }
+                    >
+                      <option value="">None</option>
+                      {EMBELLISHMENTS.filter((d) => d.expand(sel.pitch) !== null).map((d) => (
+                        <option key={d.type} value={d.type}>
+                          {d.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button className="omr-del" onClick={deleteSelected}>
+                      Delete note
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <p className="omr-hint">
+                  <strong>Tap a note</strong> to change its pitch/length/embellishment, or tap the
+                  staff to add one. ←/→ select, ↑/↓ change pitch.
+                </p>
+              )}
+            </div>
+
             <div className="photo-summary">
-              <p>
-                <strong>{result.staves.length}</strong>{' '}
-                {result.staves.length === 1 ? 'staff' : 'staves'}, <strong>{notes.length}</strong>{' '}
-                notes detected{detectEmb && embCount > 0 ? ` (${embCount} embellished)` : ''}.{' '}
-                <strong>Tap the staff to add a note; tap a note to remove it.</strong>
-              </p>
               <label className="photo-slider">
                 Sensitivity
                 <input
@@ -352,18 +455,9 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
                 <span>{scale < 1 ? 'more notes' : scale > 1 ? 'fewer notes' : 'default'}</span>
               </label>
               <label className="photo-check">
-                <input
-                  type="checkbox"
-                  checked={detectEmb}
-                  onChange={(e) => reDetect(scale, e.target.checked)}
-                />
+                <input type="checkbox" checked={detectEmb} onChange={(e) => reDetect(scale, e.target.checked)} />
                 Also detect embellishments (experimental)
               </label>
-              {result.warnings.map((w, i) => (
-                <p key={i} className="photo-warn">
-                  ⚠ {w}
-                </p>
-              ))}
               <div className="photo-actions">
                 <button className="primary" disabled={notes.length === 0} onClick={doImport}>
                   Import {notes.length} notes
@@ -376,4 +470,8 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
       </div>
     </div>
   )
+}
+
+function shortEmb(t: EmbellishmentType): string {
+  return EMBELLISHMENTS.find((d) => d.type === t)?.short ?? ''
 }

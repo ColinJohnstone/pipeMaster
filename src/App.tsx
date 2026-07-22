@@ -94,6 +94,7 @@ export default function App() {
   const isMobile = useIsMobile()
   const [sheetOpen, setSheetOpen] = React.useState(false)
   const [zoom, setZoom] = React.useState(1)
+  const [showLetters, setShowLetters] = React.useState(false)
   const layoutRef = React.useRef<ScoreLayout | null>(null)
 
   const selectedNote = s.selection ? getNote(s.score, s.selection) : undefined
@@ -474,6 +475,13 @@ export default function App() {
           >
             +
           </button>
+          <button
+            className={showLetters ? 'active' : ''}
+            onClick={() => setShowLetters((v) => !v)}
+            title="Show note letters and embellishment names above the staff"
+          >
+            A♭ Letters
+          </button>
         </div>
         <div className="tb-group">
           <select value={tsValue} onChange={(e) => parseTs(e.target.value)} title="Time signature">
@@ -770,6 +778,7 @@ export default function App() {
               score={s.score}
               selection={s.selection}
               selectedKeys={selectedKeys}
+              showLetters={showLetters}
               onSelectNote={(addr, extend) =>
                 extend ? s.selectRangeTo(addr) : s.setSelection(addr)
               }

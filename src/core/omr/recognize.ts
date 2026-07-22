@@ -615,6 +615,26 @@ export function pitchAndStaffAt(
   return { pitch: pitchForY(result.staves[staffIndex], y), staffIndex }
 }
 
+const PITCH_TO_POSITION: Record<Pitch, number> = {
+  LowG: 2,
+  LowA: 3,
+  B: 4,
+  C: 5,
+  D: 6,
+  E: 7,
+  F: 8,
+  HighG: 9,
+  HighA: 10,
+}
+
+/** Image y for a given pitch on a staff — used when a correction changes pitch. */
+export function yForPitch(result: Pick<OmrResult, 'staves'>, staffIndex: number, pitch: Pitch): number {
+  const staff = result.staves[staffIndex] ?? result.staves[0]
+  if (!staff) return 0
+  const bottom = staff.lines[staff.lines.length - 1]
+  return bottom - PITCH_TO_POSITION[pitch] * (staff.spacing / 2)
+}
+
 export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrResult {
   const warnings: string[] = []
   const noteheadScale = opts.noteheadScale ?? 1

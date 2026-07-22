@@ -2,6 +2,20 @@ import React from 'react'
 import type { Score, NoteAddress } from '../core/model/types'
 import type { Pitch } from '../core/pitch'
 import { STAFF_POSITION, pitchAtPosition } from '../core/pitch'
+import { embellishmentDef } from '../core/embellishments/registry'
+
+/** Single-letter note name shown above the staff (octave shown by position). */
+const NOTE_LETTER: Record<Pitch, string> = {
+  LowG: 'G',
+  LowA: 'A',
+  B: 'B',
+  C: 'C',
+  D: 'D',
+  E: 'E',
+  F: 'F',
+  HighG: 'G',
+  HighA: 'A',
+}
 import {
   SPACE,
   STAFF_HEIGHT,
@@ -67,6 +81,8 @@ interface ScoreViewProps {
   selection: NoteAddress | null
   /** Keys (`pi:bi:ni`) of all notes in the selected range, for highlighting. */
   selectedKeys?: Set<string>
+  /** Show the pitch letter (and embellishment name) above each note. */
+  showLetters?: boolean
   onSelectNote(addr: NoteAddress, extend: boolean): void
   onInsertNote(partIndex: number, barIndex: number, noteIndex: number, pitch: Pitch): void
   onBackgroundClick(): void
@@ -279,6 +295,7 @@ function BarNotes({
   staffTop,
   selection,
   selectedKeys,
+  showLetters,
   onSelectNote,
   tieIn,
 }: {
@@ -286,6 +303,7 @@ function BarNotes({
   staffTop: number
   selection: NoteAddress | null
   selectedKeys: Set<string>
+  showLetters: boolean
   onSelectNote(addr: NoteAddress, extend: boolean): void
   tieIn: boolean
 }) {
@@ -444,6 +462,38 @@ function BarNotes({
       {laid.notes.map((ln) => (
         <GraceCluster key={`g${ln.note.id}`} graces={ln.graces} barX={barX} staffTop={staffTop} />
       ))}
+      {showLetters &&
+        laid.notes.map((ln) => {
+          const x = barX + ln.x
+          const emb = ln.note.embellishment
+          return (
+            <g key={`L${ln.note.id}`} style={{ pointerEvents: 'none' }}>
+              {emb && (
+                <text
+                  x={x}
+                  y={staffTop - SPACE * 5}
+                  textAnchor="middle"
+                  fontSize={SPACE * 1.05}
+                  fontFamily="Inter, sans-serif"
+                  fill="var(--accent)"
+                >
+                  {embellishmentDef(emb.type).short}
+                </text>
+              )}
+              <text
+                x={x}
+                y={staffTop - SPACE * 3.7}
+                textAnchor="middle"
+                fontSize={SPACE * 1.5}
+                fontWeight={700}
+                fontFamily="Inter, sans-serif"
+                fill="var(--ink-soft)"
+              >
+                {NOTE_LETTER[ln.note.pitch]}
+              </text>
+            </g>
+          )
+        })}
       {tupletRuns(laid.notes).map((run, ri) => {
         const first = laid.notes[run[0]]
         const last = laid.notes[run[run.length - 1]]
@@ -555,6 +605,7 @@ function BarView({
   staffTop,
   selection,
   selectedKeys,
+  showLetters,
   onSelectNote,
   onInsertNote,
   onStaffDrop,
@@ -566,6 +617,7 @@ function BarView({
   staffTop: number
   selection: NoteAddress | null
   selectedKeys: Set<string>
+  showLetters: boolean
   onSelectNote(addr: NoteAddress, extend: boolean): void
   onInsertNote(partIndex: number, barIndex: number, noteIndex: number, pitch: Pitch): void
   onStaffDrop?(target: DropTarget, payload: string): void
@@ -675,6 +727,7 @@ function BarView({
         staffTop={staffTop}
         selection={selection}
         selectedKeys={selectedKeys}
+        showLetters={showLetters}
         onSelectNote={onSelectNote}
         tieIn={tieIn}
       />
@@ -687,6 +740,7 @@ function SystemView({
   contentWidth,
   selection,
   selectedKeys,
+  showLetters,
   onSelectNote,
   onInsertNote,
   onStaffDrop,
@@ -698,6 +752,7 @@ function SystemView({
   contentWidth: number
   selection: NoteAddress | null
   selectedKeys: Set<string>
+  showLetters: boolean
   onSelectNote(addr: NoteAddress, extend: boolean): void
   onInsertNote(partIndex: number, barIndex: number, noteIndex: number, pitch: Pitch): void
   onStaffDrop?(target: DropTarget, payload: string): void
@@ -728,6 +783,7 @@ function SystemView({
           staffTop={system.staffTop}
           selection={selection}
           selectedKeys={selectedKeys}
+          showLetters={showLetters}
           onSelectNote={onSelectNote}
           onInsertNote={onInsertNote}
           onStaffDrop={onStaffDrop}
@@ -770,6 +826,7 @@ export function ScoreView({
   score,
   selection,
   selectedKeys,
+  showLetters = false,
   onSelectNote,
   onInsertNote,
   onBackgroundClick,
@@ -836,6 +893,7 @@ export function ScoreView({
           contentWidth={contentWidth}
           selection={selection}
           selectedKeys={keys}
+          showLetters={showLetters}
           onSelectNote={onSelectNote}
           onInsertNote={onInsertNote}
           onStaffDrop={onStaffDrop}
