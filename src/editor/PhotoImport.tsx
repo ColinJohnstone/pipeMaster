@@ -7,11 +7,24 @@ import {
   type DetectedNote,
 } from '../core/omr/recognize'
 import { omrToScore } from '../core/omr/toScore'
+import { ocrHeader } from '../core/omr/ocr'
 import { saveOmrExample, downloadOmrDataset } from '../persistence/idb'
 import { PITCHES, type Pitch } from '../core/pitch'
 import { EMBELLISHMENTS, type EmbellishmentType } from '../core/embellishments/registry'
 import type { Score } from '../core/model/types'
 import type { Duration, TimeSig } from '../core/duration'
+
+const TIME_SIGS: Array<{ label: string; ts: TimeSig }> = [
+  { label: '2/4', ts: { beats: 2, unit: 4 } },
+  { label: '3/4', ts: { beats: 3, unit: 4 } },
+  { label: '4/4', ts: { beats: 4, unit: 4 } },
+  { label: '6/8', ts: { beats: 6, unit: 8 } },
+  { label: '9/8', ts: { beats: 9, unit: 8 } },
+  { label: '12/8', ts: { beats: 12, unit: 8 } },
+  { label: '2/2', ts: { beats: 2, unit: 2 } },
+  { label: '3/8', ts: { beats: 3, unit: 8 } },
+]
+const tsLabel = (ts: TimeSig) => `${ts.beats}/${ts.unit}`
 
 /**
  * Take/upload a photo (or PDF page) of pipe music and turn it into a draft.
@@ -77,6 +90,12 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
   const [selected, setSelected] = React.useState<number | null>(null)
   const [scale, setScale] = React.useState(1)
   const [zoom, setZoom] = React.useState(1)
+  // Header fields, auto-filled by OCR and editable before import.
+  const [title, setTitle] = React.useState('')
+  const [composer, setComposer] = React.useState('')
+  const [tuneType, setTuneType] = React.useState('')
+  const [ts, setTs] = React.useState<TimeSig>(timeSig)
+  const [ocrBusy, setOcrBusy] = React.useState(false)
   // Undo/redo for manual corrections — adding, deleting and editing notes.
   const [history, setHistory] = React.useState<DetectedNote[][]>([])
   const [future, setFuture] = React.useState<DetectedNote[][]>([])
@@ -180,6 +199,39 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
       ctx.fillText(label, n.x, ly)
     })
   }, [stage, result, notes, selected, spacing])
+
+  // Read the title / composer / type / metre from the strip above the first
+  // staff (OCR, engine fetched on demand). Best-effort: failures are silent.
+  React.useEffect(() => {
+    if (stage !== 'result' || !result || result.staves.length === 0) return
+    let cancelled = false
+    const headerBottom = Math.max(30, Math.round(result.staves[0].lines[0]) - 4)
+    const cv = document.createElement('canvas')
+    cv.width = result.width
+    cv.height = result.height
+    const cctx = cv.getContext('2d')!
+    const im = cctx.createImageData(result.width, result.height)
+    for (let i = 0; i < result.processedGray.length; i++) {
+      const v = result.processedGray[i]
+      im.data[i * 4] = im.data[i * 4 + 1] = im.data[i * 4 + 2] = v
+      im.data[i * 4 + 3] = 255
+    }
+    cctx.putImageData(im, 0, 0)
+    setOcrBusy(true)
+    ocrHeader(cv, headerBottom)
+      .then((h) => {
+        if (cancelled) return
+        if (h.title) setTitle(h.title)
+        if (h.composer) setComposer(h.composer)
+        if (h.tuneType) setTuneType(h.tuneType)
+        if (h.timeSig) setTs(h.timeSig)
+      })
+      .catch(() => {})
+      .finally(() => !cancelled && setOcrBusy(false))
+    return () => {
+      cancelled = true
+    }
+  }, [stage, result])
 
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -377,7 +429,7 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
     } catch {
       /* best-effort */
     }
-    onImport(omrToScore(notes, timeSig, 'Imported from photo'))
+    onImport(omrToScore(notes, ts, title.trim() || 'Imported from photo', { composer: composer.trim(), tuneType: tuneType.trim() }))
     onClose()
   }
 
@@ -576,6 +628,45 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
                   one. ←/→ select, ↑/↓ change pitch, ⌘Z undo.
                 </p>
               )}
+            </div>
+
+            {/* Tune details — auto-filled from the photo's header text (OCR), editable. */}
+            <div className="omr-details">
+              <div className="omr-details-head">
+                <span className="omr-lbl">Tune details</span>
+                {ocrBusy && <span className="omr-ocr">reading text from photo…</span>}
+              </div>
+              <div className="omr-fields">
+                <input
+                  className="omr-field omr-field-title"
+                  placeholder="Title"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                />
+                <input
+                  className="omr-field"
+                  placeholder="Composer"
+                  value={composer}
+                  onChange={(e) => setComposer(e.target.value)}
+                />
+                <input
+                  className="omr-field omr-field-type"
+                  placeholder="Type (e.g. March)"
+                  value={tuneType}
+                  onChange={(e) => setTuneType(e.target.value)}
+                />
+                <select
+                  className="omr-field omr-field-ts"
+                  value={tsLabel(ts)}
+                  onChange={(e) => setTs(TIME_SIGS.find((t) => t.label === e.target.value)!.ts)}
+                >
+                  {TIME_SIGS.map((t) => (
+                    <option key={t.label} value={t.label}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div className="photo-summary">

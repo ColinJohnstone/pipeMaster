@@ -692,6 +692,48 @@ kbd {
   line-height: 1.5;
 }
 
+/* ---- OMR tune details (OCR-filled) ---- */
+.omr-details {
+  margin: 10px 0;
+}
+.omr-details-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.omr-ocr {
+  font-size: 11.5px;
+  color: var(--accent);
+  font-style: italic;
+}
+.omr-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.omr-field {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-size: 13px;
+  color: var(--text);
+}
+.omr-field-title {
+  flex: 2 1 200px;
+  font-weight: 600;
+}
+.omr-fields > .omr-field:nth-child(2) {
+  flex: 1 1 140px;
+}
+.omr-field-type {
+  flex: 0 1 130px;
+}
+.omr-field-ts {
+  flex: 0 0 70px;
+}
+
 .linkish {
   background: none;
   border: none;

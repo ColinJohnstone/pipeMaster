@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { recognize } from '../src/core/omr/recognize'
 import { omrToScore } from '../src/core/omr/toScore'
 import { matchEmbellishment } from '../src/core/omr/matchEmbellishment'
+import { parseHeader } from '../src/core/omr/ocr'
 
 /** Minimal raster canvas backed by a Uint8ClampedArray (white background). */
 function makeImage(w: number, h: number) {
@@ -191,6 +192,48 @@ describe('OMR → Score conversion', () => {
     const r = recognize(blank.imageData)
     expect(r.staves.length).toBe(0)
     expect(r.warnings.length).toBeGreaterThan(0)
+  })
+})
+
+describe('OCR header parsing', () => {
+  // Shaped like Tesseract's data.lines for a typical pipe-tune header.
+  const line = (text: string, x0: number, y0: number, x1: number, y1: number) => ({
+    text,
+    bbox: { x0, y0, x1, y1 },
+  })
+
+  it('pulls title, composer, type and metre from header lines', () => {
+    const data = {
+      lines: [
+        line('6/8 March', 60, 60, 240, 85), // type + metre, top-left
+        line('The Glendaruel Highlanders', 300, 20, 1050, 72), // title (tallest)
+        line('P/M A. Fettes', 1120, 68, 1330, 92), // composer, top-right
+      ],
+    }
+    const h = parseHeader(data)
+    expect(h.title).toBe('The Glendaruel Highlanders')
+    expect(h.tuneType).toBe('March')
+    expect(h.timeSig).toEqual({ beats: 6, unit: 8 })
+    expect(h.composer).toBe('P/M A. Fettes')
+  })
+
+  it('strips the metre/type credit when OCR merges it with the composer line', () => {
+    // Type (left) and composer (right) share a baseline → one merged OCR line.
+    const data = {
+      lines: [
+        { text: 'The Braes of Mar', bbox: { x0: 280, y0: 10, x1: 720, y1: 60 } },
+        { text: '6/8 March   P/M J. MacLeod', bbox: { x0: 40, y0: 74, x1: 960, y1: 96 } },
+      ],
+    }
+    const h = parseHeader(data)
+    expect(h.title).toBe('The Braes of Mar')
+    expect(h.tuneType).toBe('March')
+    expect(h.timeSig).toEqual({ beats: 6, unit: 8 })
+    expect(h.composer).toBe('P/M J. MacLeod')
+  })
+
+  it('returns nothing usable for an empty scan', () => {
+    expect(parseHeader({ lines: [] })).toEqual({})
   })
 })
 

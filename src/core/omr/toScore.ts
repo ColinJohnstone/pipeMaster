@@ -15,6 +15,7 @@ export function omrToScore(
   notes: DetectedNote[],
   timeSig: TimeSig,
   title: string,
+  meta?: { composer?: string; tuneType?: string },
 ): Score {
   const cap = barCapacityBeats(timeSig)
   const bars: { id: string; notes: ReturnType<typeof createNote>[] }[] = []
@@ -39,8 +40,8 @@ export function omrToScore(
     version: 1,
     id: newId('score'),
     title: title || 'Imported from photo',
-    tuneType: '',
-    composer: '',
+    tuneType: meta?.tuneType ?? '',
+    composer: meta?.composer ?? '',
     timeSig,
     tempo: 80,
     parts: [{ id: newId('p'), bars }],
