@@ -23,3 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 .vercel
+
+# Local test scans (may be copyrighted sheet music) — never commit
+photos/
