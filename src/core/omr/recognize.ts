@@ -513,17 +513,14 @@ function findStem(
   let best: Stem = { dir: 0, tipY: ny, x: Math.round(nx), len: 0 }
   // A stem attaches at the left or right edge of the notehead (~half a space
   // from centre), so search both the blob radius and the nominal head width.
-  const cols = [
-    Math.round(nx - r * 0.8),
-    Math.round(nx + r * 0.8),
-    Math.round(nx - sp * 0.5),
-    Math.round(nx + sp * 0.5),
-    // The stem often attaches at the notehead's outer edge (~0.6 sp from centre);
-    // sampling there catches down-stems that the inner columns miss → better recall.
-    Math.round(nx - sp * 0.62),
-    Math.round(nx + sp * 0.62),
-    Math.round(nx),
-  ]
+  // Sweep the whole width of the notehead rather than probing a few nominal
+  // offsets. Where a stem sits depends on how the head was engraved and on how
+  // accurately the blob was centred, and a handful of fixed columns kept missing
+  // it: one note in six was reported stemless and silently defaulted to a
+  // quaver, which is where most wrong note lengths came from.
+  const cols: number[] = []
+  for (let d = -0.8; d <= 0.8001; d += 0.1) cols.push(Math.round(nx + d * sp))
+  cols.push(Math.round(nx - r * 0.8), Math.round(nx + r * 0.8))
   for (const sx of cols) {
     for (const dir of [1, -1] as const) {
       let len = 0
@@ -571,7 +568,11 @@ function countBeams(ink: Uint8Array, w: number, h: number, stem: Stem, sp: numbe
     const y = stem.tipY + toNote * k
     if (y < 0 || y >= h) break
     const run = hRun(ink, w, h, stem.x + 1, y, 1) + hRun(ink, w, h, stem.x - 1, y, -1)
-    const isBeam = run >= sp * 0.7
+    // A beam only has to be clearly wider than the stem it crosses. Demanding
+    // 0.7 of a space missed real beams wholesale — the last note under a beam
+    // carries only its own stub of one — and read the quavers as crotchets.
+    // 0.45 and 0.55 score within one of each other, so this is a flat optimum.
+    const isBeam = run >= sp * 0.5
     if (isBeam && !inBand) {
       bands++
       inBand = true
