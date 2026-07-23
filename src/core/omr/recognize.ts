@@ -1149,21 +1149,36 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
   // Small blobs are either augmentation dots (just right of a notehead, same
   // height) or gracenotes (left of / above the note they lead into). Classify
   // by position so a dot is never mistaken for a gracenote.
-  const heads: { s: Blob; staff: number }[] = []
+  const dots = new Set<Blob>()
   for (const s of smallBlobs) {
+    // An augmentation dot is markedly SMALLER than a gracenote head. Without
+    // that guard, a gracenote that happens to sit level with the PREVIOUS note
+    // and a space or so to its right is shaped exactly like that note's dot, and
+    // was being consumed as one — losing the gracenote and inventing the dot.
+    if (s.r >= melodyR * 0.5) continue
     const staff = nearestStaff(staves, s.y)
-
-    let isDot = false
     for (const n of notes) {
       if (n.staffIndex !== staff) continue
       const dx = s.x - n.x
       if (dx > sp * 0.5 && dx < sp * 1.7 && Math.abs(s.y - n.y) < sp * 0.45) {
         n.dotted = true
-        isDot = true
+        dots.add(s)
         break
       }
     }
-    if (isDot) continue
+  }
+
+  /**
+   * Which small blobs look like a notehead at all? Answering this for every blob
+   * BEFORE pairing them up matters: the "a head is the lowest of a stack" test
+   * below has to compare a candidate against other HEADS, not against any ink.
+   * Judged against raw blobs it was rejecting real gracenotes because a melody
+   * beam happened to pass a couple of spaces underneath them.
+   */
+  const headLike: Blob[] = []
+  for (const s of smallBlobs) {
+    if (dots.has(s)) continue
+    const staff = nearestStaff(staves, s.y)
 
     // Only blobs of gracenote size qualify — below this they are ink specks,
     // beam fragments or staff-line remnants, which otherwise pile up on a note.
@@ -1190,25 +1205,33 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     // The allowance has to cover a gracenote head's own measurement noise: real
     // ones were landing at 0.31 and 0.34 off their step and being thrown away.
     if (Math.abs(sPos - Math.round(sPos)) > 0.38) continue
-    // A gracenote's head is the BOTTOM of it: the stem and its three flags rise
-    // above. So where several candidates stack at the same x, only the lowest is
-    // a head — the others are flags, and taking one of those reads the pitch a
-    // step or more too high (a High G gracenote arriving as High A, which turns
-    // every doubling into a thumb doubling).
-    // The reach sideways has to cover the stem, which rises from the head's
-    // RIGHT edge, so a flag sits offset from the head it belongs to rather than
-    // directly over it. At 0.4 the flags fell outside and every single gracenote
-    // gained a phantom twin exactly one space above it — [D] read as [D,F], a
-    // strike's [LowG] as [LowG,B]. Distinct heads in a cluster are ~1.5 apart,
-    // so 0.7 cannot swallow a real neighbour.
+
+    headLike.push(s)
+  }
+
+  /**
+   * A gracenote's head is the BOTTOM of it: the stem and its three flags rise
+   * above. So where several heads stack at the same x, only the lowest is real —
+   * the others are flags, and taking one reads the pitch a step or more too high
+   * (a High G gracenote arriving as High A, turning a doubling into a thumb
+   * doubling).
+   *
+   * The reach sideways has to cover the stem, which rises from the head's RIGHT
+   * edge, so a flag sits offset from its head rather than directly over it. At
+   * 0.4 the flags fell outside and every single gracenote gained a phantom twin
+   * one space above it — [D] read as [D,F]. Distinct heads in a cluster sit ~1.5
+   * apart, so 0.7 cannot swallow a real neighbour.
+   */
+  const heads: { s: Blob; staff: number }[] = []
+  for (const s of headLike) {
     if (
-      smallBlobs.some(
+      headLike.some(
         (o) => o !== s && Math.abs(o.x - s.x) < sp * 0.7 && o.y > s.y + sp * 0.3 && o.y < s.y + sp * 3,
       )
     )
       continue
 
-    heads.push({ s, staff })
+    heads.push({ s, staff: nearestStaff(staves, s.y) })
   }
 
   /**
