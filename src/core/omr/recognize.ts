@@ -257,7 +257,15 @@ function detectStaves(ink: Uint8Array, w: number, h: number, warnings: string[])
     for (let x = 0; x < w; x++) if (ink[row + x]) c++
     rowDark[y] = c
   }
-  const lineThresh = w * 0.35
+  // A thin, faint or anti-aliased staff line splits its ink across two rows, so
+  // none of them reaches a fixed fraction of the page width — which left light
+  // photocopied scans with no detectable staves at all. Set the bar relative to
+  // the densest row as well: a real staff line spans the whole system and is
+  // among the darkest rows on the page. Keep a floor so a near-blank image can't
+  // turn noise into "lines".
+  let maxRow = 0
+  for (const v of rowDark) if (v > maxRow) maxRow = v
+  const lineThresh = Math.max(w * 0.12, Math.min(w * 0.35, maxRow * 0.5))
   const lineCentres: number[] = []
   let y = 0
   while (y < h) {
