@@ -994,9 +994,16 @@ function durationBase(
 ): 1 | 2 | 4 | 8 | 16 | 32 {
   const stem = findStem(ink, w, h, b.x, b.y, b.r, sp)
   const hasStem = stem.len >= sp * 1.1
-  if (!filled) return hasStem ? 2 : 1 // half or whole
+  const beams = hasStem ? countBeams(ink, w, h, stem, sp) : 0
+  if (!filled) {
+    // A half or whole note is never beamed. So an "open" head that carries a
+    // beam is really a FILLED head whose faint centre binarised into a hole —
+    // common on light photocopies — and its length is the beam count, not a
+    // minim. Only a beamless open head is a genuine half (or, stemless, whole).
+    if (beams > 0) return beams === 1 ? 8 : beams === 2 ? 16 : 32
+    return hasStem ? 2 : 1
+  }
   if (!hasStem) return 8 // filled, no clear stem → assume quaver
-  const beams = countBeams(ink, w, h, stem, sp)
   return beams === 0 ? 4 : beams === 1 ? 8 : beams === 2 ? 16 : 32
 }
 
