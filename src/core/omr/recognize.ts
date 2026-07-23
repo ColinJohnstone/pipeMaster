@@ -229,15 +229,29 @@ function detectStaves(ink: Uint8Array, w: number, h: number, warnings: string[])
   // not every line was detected — this fixes spacing when a line drops out.
   const staves: DetectedStaff[] = []
   let group: number[] = [lineCentres[0]]
+  /**
+   * Pull every five-line staff out of a group of nearby lines. Scanning within
+   * the group (rather than demanding the whole group span exactly four gaps)
+   * makes this robust to extra rows that land close to the music — a dense line
+   * of footer text under the last system used to be merged in and throw the
+   * whole staff away. A span of four gaps whose implied spacing matches the
+   * page's is a staff, even if some of its own lines went undetected.
+   */
   const flush = () => {
-    if (group.length >= 3) {
-      const first = group[0]
-      const last = group[group.length - 1]
-      const nGaps = Math.round((last - first) / sp)
-      if (nGaps === 4) {
-        const gsp = (last - first) / 4
-        staves.push({ lines: [0, 1, 2, 3, 4].map((k) => first + k * gsp), spacing: gsp })
+    let i = 0
+    while (i + 1 < group.length) {
+      let matched = false
+      for (let j = Math.min(group.length - 1, i + 6); j > i + 1; j--) {
+        const span = group[j] - group[i]
+        const gsp = span / 4
+        if (Math.round(span / sp) === 4 && Math.abs(gsp - sp) <= sp * 0.3) {
+          staves.push({ lines: [0, 1, 2, 3, 4].map((k) => group[i] + k * gsp), spacing: gsp })
+          i = j + 1
+          matched = true
+          break
+        }
       }
+      if (!matched) i++
     }
     group = []
   }
@@ -861,6 +875,11 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
   const graceR = melodyR * 0.78 * noteheadScale // below this → gracenote, whatever the stem reads
 
   const isMelody = (b: Blob): boolean => {
+    // The bagpipe scale runs Low G (position 2) to High A (position 10). Anything
+    // sitting above High A is a gracenote hovering over the staff, never a melody
+    // note — on real scans this alone accounts for most gracenote leakage.
+    const pos = staffPos(b)
+    if (pos > 10.6 || pos < 1.4) return false
     if (b.r < graceR) return false // noticeably smaller → gracenote
     if (hasUpStem(b)) return false // up-stem → gracenote
     // A smallish blob capped by flags is a gracenote even if full-ish size; the
@@ -876,11 +895,32 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
   for (const b of blobs) {
     if (onStaff(b) && !timeSig.has(b) && b.r >= sp * 0.12 && b.r < sp * 0.2) smalls.push(b)
   }
-  const melodyBlobs = dedupeColumns(melody)
+  /**
+   * One printed notehead can raise several distance-transform peaks spread
+   * across its width, each becoming a separate "note". Pipe music is monophonic,
+   * so two melody notes are never within a space of one another — collapse any
+   * such cluster to its strongest peak. Applied only to melody blobs, so a
+   * gracenote cluster (handled separately) is untouched.
+   */
+  const mergeDuplicates = (bs: Blob[]): Blob[] => {
+    const strongestFirst = [...bs].sort((a, b) => b.r - a.r)
+    const kept: Blob[] = []
+    for (const b of strongestFirst) {
+      if (kept.some((k) => Math.abs(k.x - b.x) < sp * 0.9 && Math.abs(k.y - b.y) < sp * 0.8)) continue
+      kept.push(b)
+    }
+    return kept
+  }
+  const melodyBlobs = mergeDuplicates(dedupeColumns(melody))
   const smallBlobs = detectEmb ? smalls : []
 
-  // Open (half/whole) noteheads are found separately via their hole.
-  const openBlobs = findOpenNoteheads(noStaff, w, h, sp, melodyBlobs).filter(onStaff)
+  // Open (half/whole) noteheads are found separately via their hole. The gaps
+  // enclosed between a gracenote cluster's stems and its beams also read as
+  // holes, so apply the same Low G…High A ceiling — a "note" above High A is a
+  // gracenote artefact, not a minim.
+  const openBlobs = findOpenNoteheads(noStaff, w, h, sp, melodyBlobs).filter(
+    (b) => onStaff(b) && staffPos(b) <= 10.6 && staffPos(b) >= 1.4,
+  )
 
   // Build melody notes with a detected duration.
   const notes: DetectedNote[] = [
@@ -917,15 +957,20 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     }
     if (isDot) continue
 
+    // Only blobs of gracenote size qualify — below this they are ink specks,
+    // beam fragments or staff-line remnants, which otherwise pile up on a note.
+    if (s.r < melodyR * 0.38) continue
+
     let target: DetectedNote | undefined
     let bestDx = Infinity
     for (const n of notes) {
       if (n.staffIndex !== staff) continue
       const dx = n.x - s.x // note is to the right of the gracenote
-      // Gracenotes sit clearly to the LEFT of their note and above / beside it,
+      // Gracenotes sit close to the LEFT of their note and above / beside it,
       // never below or on top of it — this rejects stem-tip, beam, and
       // ring/stem-junction artifacts that fall under the melody line.
       if (s.y > n.y + sp * 0.9) continue
+      if (s.y < n.y - sp * 4.5) continue // far above: belongs to nothing here
       if (dx > sp * 0.35 && dx < sp * 3.5 && dx < bestDx) {
         bestDx = dx
         target = n
@@ -937,6 +982,9 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
   // Reverse-match each gracenote cluster to an embellishment.
   for (const n of notes) {
     n.graces.sort((a, b) => a.x - b.x)
+    // No pipe embellishment has more than five gracenotes; if more were
+    // collected the extras are noise, so keep the five nearest the note.
+    if (n.graces.length > 5) n.graces = n.graces.slice(-5)
     if (n.graces.length > 0) {
       const m = matchEmbellishment(
         n.pitch,
