@@ -267,17 +267,27 @@ describe('matchEmbellishment (reverse lookup against the registry)', () => {
   // High G, C, D) but that note is played, not drawn — the page shows only the
   // two little notes. Matching has to work from what is actually written.
   it('matches embellishments from the gracenotes actually drawn on the page', () => {
-    expect(matchEmbellishment('C', ['HighG', 'D'])?.type).toBe('doubling')
-    expect(matchEmbellishment('F', ['HighG', 'HighG'])?.type).toBe('doubling')
-    expect(matchEmbellishment('LowA', ['LowG', 'LowG'])?.type).toBe('birl')
+    // An expansion is the engraved sequence, and it may include a gracenote at
+    // the melody note's own pitch: a doubling on C is drawn High G, C, D — three
+    // little heads — and a birl on Low A is drawn Low G, Low A, Low G.
+    expect(matchEmbellishment('C', ['HighG', 'C', 'D'])?.type).toBe('doubling')
+    expect(matchEmbellishment('F', ['HighG', 'F', 'HighG'])?.type).toBe('doubling')
+    expect(matchEmbellishment('LowA', ['LowG', 'LowA', 'LowG'])?.type).toBe('birl')
     expect(matchEmbellishment('LowA', ['LowG', 'D', 'LowG'])?.type).toBe('grip')
     expect(matchEmbellishment('C', ['LowG', 'D', 'LowG'])?.type).toBe('grip')
   })
 
+  it('tells a doubling from a half doubling by its leading gracenote', () => {
+    // They differ only in the High G at the front, which is why the whole beamed
+    // group must be attached and not just the heads nearest the melody note.
+    expect(matchEmbellishment('E', ['HighG', 'E', 'F'])?.type).toBe('doubling')
+    expect(matchEmbellishment('E', ['E', 'F'])?.type).toBe('halfDoubling')
+  })
+
   it('does not confuse a doubling with a thumb doubling', () => {
     // These differ only in the first gracenote: High G vs High A.
-    expect(matchEmbellishment('C', ['HighG', 'D'])?.type).toBe('doubling')
-    expect(matchEmbellishment('C', ['HighA', 'D'])?.type).toBe('thumbDoubling')
+    expect(matchEmbellishment('C', ['HighG', 'C', 'D'])?.type).toBe('doubling')
+    expect(matchEmbellishment('C', ['HighA', 'C', 'D'])?.type).toBe('thumbDoubling')
   })
 
   it('tolerates one missed gracenote', () => {
