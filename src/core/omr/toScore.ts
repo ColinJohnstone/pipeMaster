@@ -153,6 +153,61 @@ function fitBarBySpacing(seg: Segment, capacity: number): Array<{ base: Detected
   return Math.abs(sum - capacity) < 1e-6 ? snapped.map((s) => ({ base: s.base, dots: s.dots })) : null
 }
 
+/**
+ * Guess the time signature from the music itself: read the notes off the page,
+ * split them at the detected barlines, and see how many beats a full bar holds.
+ * The most common bar total is the meter's capacity — far more reliable than
+ * reading the tiny printed time-signature glyph, which OCR routinely misses, and
+ * it is what stops a 3/4 tune importing as 4/4 with every bar a beat short.
+ *
+ * Returns null when there is too little to go on (few bars, or no barlines), so
+ * the caller can keep whatever the header OCR or the user chose.
+ */
+export function inferTimeSig(notes: DetectedNote[], barlines: number[][]): TimeSig | null {
+  if (!barlines.some((b) => b.length > 0)) return null
+  const segs = segmentByBarlines(notes, barlines)
+  // Only full interior bars are reliable — the first/last of a line may be a
+  // pickup or a bar the barline detector clipped.
+  const totals: number[] = []
+  for (const s of segs) {
+    if (s.endX === undefined || s.notes.length === 0) continue
+    const t = s.notes.reduce((a, n) => a + beats({ base: n.base, dots: n.dotted ? 1 : 0 }), 0)
+    if (t > 0.5) totals.push(Math.round(t * 2) / 2) // nearest half-beat
+  }
+  if (totals.length < 3) return null
+  // The commonest bar total is the capacity.
+  const freq = new Map<number, number>()
+  for (const t of totals) freq.set(t, (freq.get(t) ?? 0) + 1)
+  let cap = 0
+  let best = 0
+  for (const [t, n] of freq) if (n > best || (n === best && t > cap)) [best, cap] = [n, t]
+  // Need a clear winner, not a scatter of misread bars.
+  if (best < Math.max(2, totals.length * 0.34)) return null
+  // A three-beat bar is 3/4 OR 6/8 — same capacity, different feel. Compound
+  // time is dense with quavers (two groups of three), so tell them apart by how
+  // many notes a full bar carries: a 6/8 bar runs to five or more, a 3/4 march
+  // sits around three or four. Six beats splits 12/8 vs a rare 6/4 the same way.
+  const capBars = segs.filter(
+    (s) =>
+      s.endX !== undefined &&
+      Math.round(
+        s.notes.reduce((a, n) => a + beats({ base: n.base, dots: n.dotted ? 1 : 0 }), 0) * 2,
+      ) /
+        2 ===
+        cap,
+  )
+  const avgNotes = capBars.reduce((a, s) => a + s.notes.length, 0) / Math.max(1, capBars.length)
+  if (cap === 3) return avgNotes >= 5 ? { beats: 6, unit: 8 } : { beats: 3, unit: 4 }
+  if (cap === 6) return { beats: 12, unit: 8 }
+  const BY_CAP: Record<number, TimeSig> = {
+    1.5: { beats: 3, unit: 8 },
+    2: { beats: 2, unit: 4 },
+    4: { beats: 4, unit: 4 },
+    4.5: { beats: 9, unit: 8 },
+  }
+  return BY_CAP[cap] ?? null
+}
+
 export function omrToScore(
   notes: DetectedNote[],
   timeSig: TimeSig,

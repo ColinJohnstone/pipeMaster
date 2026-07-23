@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { recognize } from '../src/core/omr/recognize'
-import { omrToScore } from '../src/core/omr/toScore'
+import { omrToScore, inferTimeSig } from '../src/core/omr/toScore'
 import { matchEmbellishment } from '../src/core/omr/matchEmbellishment'
 import { parseHeader } from '../src/core/omr/ocr'
 
@@ -185,6 +185,36 @@ describe('OMR → Score conversion', () => {
     expect(notes.map((n) => n.pitch)).toEqual(['B', 'D'])
     expect(notes[0].embellishment?.type).toBe('gGrace')
     expect(notes.every((n) => n.duration.base === 8)).toBe(true)
+  })
+
+  it('infers the meter from the bar lengths the music shows', () => {
+    // Helper: N bars each of the given note bases, split by barlines at x steps.
+    const build = (bars: number[][]) => {
+      const notes: Parameters<typeof inferTimeSig>[0] = []
+      const lines: number[] = []
+      let x = 0
+      bars.forEach((bases) => {
+        bases.forEach((base) => {
+          notes.push({ pitch: 'LowA', x, y: 70, staffIndex: 0, base, dots: false, graces: [] } as never)
+          x += 10
+        })
+        lines.push(x + 2)
+        x += 6
+      })
+      return { notes, barlines: [lines] }
+    }
+    const three = [4, 4, 4]
+    const four = [4, 4, 4, 4]
+    const six = [8, 8, 8, 8, 8, 8]
+    // Bars of three crotchets → 3/4.
+    let g = build([three, three, three, three, three])
+    expect(inferTimeSig(g.notes, g.barlines)).toEqual({ beats: 3, unit: 4 })
+    // Bars of four crotchets → 4/4.
+    g = build([four, four, four, four, four])
+    expect(inferTimeSig(g.notes, g.barlines)).toEqual({ beats: 4, unit: 4 })
+    // Three-beat bars packed with six quavers → 6/8, not 3/4.
+    g = build([six, six, six, six, six])
+    expect(inferTimeSig(g.notes, g.barlines)).toEqual({ beats: 6, unit: 8 })
   })
 
   it('reports a helpful warning when no staff is found', () => {

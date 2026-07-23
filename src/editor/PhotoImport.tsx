@@ -6,13 +6,14 @@ import {
   type OmrResult,
   type DetectedNote,
 } from '../core/omr/recognize'
-import { omrToScore } from '../core/omr/toScore'
+import { omrToScore, inferTimeSig } from '../core/omr/toScore'
 import { ocrHeader } from '../core/omr/ocr'
 import { saveOmrExample, downloadOmrDataset } from '../persistence/idb'
 import { PITCHES, type Pitch } from '../core/pitch'
 import { EMBELLISHMENTS, type EmbellishmentType } from '../core/embellishments/registry'
 import type { Score } from '../core/model/types'
 import type { Duration, TimeSig } from '../core/duration'
+import { barCapacityBeats } from '../core/duration'
 
 const TIME_SIGS: Array<{ label: string; ts: TimeSig }> = [
   { label: '2/4', ts: { beats: 2, unit: 4 } },
@@ -135,6 +136,11 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
       const res = recognize(imageData, { noteheadScale, detectEmbellishments: true })
       setResult(res)
       setNotes(res.notes)
+      // Read the meter off the music itself so a 3/4 tune doesn't import as 4/4
+      // with every bar a beat short. Header OCR, if it later finds a printed
+      // time signature, still refines this.
+      const inferred = inferTimeSig(res.notes, res.barlines)
+      if (inferred) setTs(inferred)
       setStage('result')
       setBusy(false)
     }, 30)
@@ -242,7 +248,15 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
         if (h.title) setTitle(h.title)
         if (h.composer) setComposer(h.composer)
         if (h.tuneType) setTuneType(h.tuneType)
-        if (h.timeSig) setTs(h.timeSig)
+        // Let OCR name the exact meter, but only when it agrees on the bar
+        // length the music actually shows — otherwise a misread digit would
+        // put back the very mismatch the inference just fixed.
+        if (h.timeSig) {
+          const inferred = result ? inferTimeSig(notes, result.barlines) : null
+          if (!inferred || barCapacityBeats(h.timeSig) === barCapacityBeats(inferred)) {
+            setTs(h.timeSig)
+          }
+        }
       })
       .catch(() => {})
       .finally(() => !cancelled && setOcrBusy(false))
