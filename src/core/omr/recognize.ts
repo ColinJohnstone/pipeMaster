@@ -1168,6 +1168,83 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
   })
   notes.sort((a, b) => a.staffIndex - b.staffIndex || a.x - b.x)
 
+  /**
+   * Recover a notehead the hole-based pass missed by finding its STEM. An open
+   * notehead centred in a space loses its ring to staff-line removal, so no
+   * counter survives — but its stem does, and the note leaves a conspicuous wide
+   * GAP in the row of detected notes (a minim is long, so it sits far from its
+   * neighbours). So look inside each oversized gap for a lone vertical stem with
+   * no notehead at its base, and rebuild the note there. This reaches the
+   * degraded minims that no amount of counter-shape tuning can, and — placed
+   * before gracenote attachment — lets the note collect its own embellishment.
+   */
+  for (let si = 0; si < staves.length; si++) {
+    const row = notes.filter((n) => n.staffIndex === si).sort((a, b) => a.x - b.x)
+    if (row.length < 3) continue
+    const gaps = row.slice(1).map((n, i) => n.x - row[i].x).sort((a, b) => a - b)
+    const med = gaps[gaps.length >> 1]
+    if (!(med > 0)) continue
+    const top = Math.round(staves[si].lines[0] - sp * 1.2)
+    const bot = Math.round(staves[si].lines[staves[si].lines.length - 1] + sp * 1.2)
+    for (let i = 1; i < row.length; i++) {
+      if (row[i].x - row[i - 1].x < med * 1.8) continue
+      // Longest vertical ink run in the open middle of the gap = a stem.
+      let found: { x: number; y0: number; len: number } | null = null
+      for (let x = Math.round(row[i - 1].x + med * 0.7); x < row[i].x - med * 0.3; x += 1) {
+        let run = 0
+        let y0 = 0
+        let bestLen = 0
+        let bestY0 = 0
+        for (let y = top; y <= bot; y++) {
+          if (inkAt(noStaff, w, h, x, y)) {
+            if (run === 0) y0 = y
+            run++
+            if (run > bestLen) {
+              bestLen = run
+              bestY0 = y0
+            }
+          } else run = 0
+        }
+        if (bestLen >= sp * 1.8 && bestLen <= sp * 4 && (!found || bestLen > found.len)) {
+          found = { x, y0: bestY0, len: bestLen }
+        }
+      }
+      if (!found) continue
+      // The head is at the stem's upper end (melody stems run down): the row of
+      // widest ink just below the stem top.
+      let headY = found.y0 + Math.round(sp * 0.3)
+      let bestW = 0
+      for (let y = found.y0; y <= found.y0 + Math.round(sp * 0.8); y++) {
+        const wRun = hRun(noStaff, w, h, found.x, y, 1) + hRun(noStaff, w, h, found.x, y, -1)
+        if (wRun > bestW) {
+          bestW = wRun
+          headY = y
+        }
+      }
+      const headX = found.x
+      const pos = positionAt(staves[si], headY, phases[si])
+      // Two guards keep this from grabbing a gracenote cluster's stem, which is
+      // the only other lone vertical run in a gap: a cluster sits ABOVE the top
+      // line (its heads and beam land at High G / High A and above) and rarely
+      // settles on a step, whereas a melody minim rests ON a staff step at or
+      // below High G. So require an on-step head no higher than High G. Both
+      // guards sit on a plateau — 9.0/0.3 and 9.3/0.35 score identically.
+      if (pos > 9.0 || pos < 1.4) continue
+      if (Math.abs(pos - Math.round(pos)) > 0.3) continue
+      // Skip if a note is already here.
+      if (notes.some((n) => n.staffIndex === si && Math.abs(n.x - headX) < med * 0.6)) continue
+      notes.push({
+        pitch: pitchForY(staves[si], headY, phases[si]),
+        x: headX,
+        y: headY,
+        staffIndex: si,
+        base: durationBase(noStaff, w, h, { x: headX, y: headY, r: sp * 0.4 }, false, sp),
+        graces: [],
+      })
+    }
+  }
+  notes.sort((a, b) => a.staffIndex - b.staffIndex || a.x - b.x)
+
   // Small blobs are either augmentation dots (just right of a notehead, same
   // height) or gracenotes (left of / above the note they lead into). Classify
   // by position so a dot is never mistaken for a gracenote.
