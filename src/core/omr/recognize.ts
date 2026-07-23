@@ -774,8 +774,13 @@ function findOpenNoteheads(
     // and slurs are triangular or wedge-shaped (~50% or less) and often the
     // wrong proportions — without these shape tests they read as minims and
     // wildly inflate the note lengths.
+    //
+    // Shape carries this, not size: an upper bound of 0.62 was throwing away
+    // real minims, whose counters measure ~0.85 of a space on the sample scans
+    // (aspect 1.9, fill 0.82 — textbook). 1.0 and 1.2 score identically, so
+    // nothing hinges on the exact figure.
     const fill = area / (bw * bh)
-    if (dia >= sp * 0.28 && dia <= sp * 0.62 && aspect > 0.9 && aspect < 2.4 && fill >= 0.55) {
+    if (dia >= sp * 0.28 && dia <= sp * 1.0 && aspect > 0.9 && aspect < 2.4 && fill >= 0.55) {
       const cx = sx / area
       const cy = sy / area
       if (!filled.some((f) => Math.hypot(f.x - cx, f.y - cy) < sp * 0.8)) {
