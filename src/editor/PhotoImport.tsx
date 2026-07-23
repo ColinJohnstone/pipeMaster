@@ -63,9 +63,13 @@ const LENGTHS: Array<{ base: Duration['base']; label: string }> = [
 /** Rasterise the first page of a PDF to a canvas — pdf.js is loaded on demand. */
 async function rasterizePdf(file: File): Promise<HTMLCanvasElement> {
   const pdfjsLib = await import('pdfjs-dist')
-  pdfjsLib.GlobalWorkerOptions.workerSrc = (
-    await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-  ).default
+  // Vite's ?worker import yields a real Worker constructor, which pdf.js takes
+  // via workerPort. The ?url form returned something pdf.js rejected with
+  // "Invalid `workerSrc` type", which broke every PDF import.
+  const workerMod = (await import('pdfjs-dist/build/pdf.worker.min.mjs?worker')) as unknown as {
+    default: new () => Worker
+  }
+  pdfjsLib.GlobalWorkerOptions.workerPort = new workerMod.default()
   const buf = await file.arrayBuffer()
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise
   const page = await pdf.getPage(1)

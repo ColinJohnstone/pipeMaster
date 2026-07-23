@@ -72,8 +72,24 @@ function toLines(data: unknown): Line[] {
 }
 
 /** Turn OCR'd header lines into title / composer / type / metre. Best-effort. */
+/**
+ * A browser "print to PDF" page stamps a header/footer with the date, time,
+ * page title and URL. That is never part of a tune's credits, and it otherwise
+ * gets picked up as the composer.
+ */
+function isPrintArtifact(t: string): boolean {
+  return (
+    /\d{1,2}:\d{2}\s*(AM|PM)/i.test(t) ||
+    /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(t) ||
+    /https?:\/\//i.test(t) ||
+    /\b[\w-]+\.(com|ca|org|net|uk|scot)\b/i.test(t) ||
+    /localhost/i.test(t) ||
+    /\bpage\s*\d+\s*(of|\/)\s*\d+/i.test(t)
+  )
+}
+
 export function parseHeader(data: unknown): OcrHeader {
-  const lines = toLines(data)
+  const lines = toLines(data).filter((l) => !isPrintArtifact(l.text))
   const all = lines.map((l) => l.text).join('  ')
   const out: OcrHeader = {}
 
@@ -95,6 +111,7 @@ export function parseHeader(data: unknown): OcrHeader {
   // credit — the title is normally the largest text on the page.
   const isCredit = (t: string) => (typeRe.test(t) || /\d\s*\/\s*\d/.test(t)) && t.length < 24
   const looksLikeName = (t: string) =>
+    /^(trad\.?|traditional)\b/i.test(t.trim()) ||
     /\b(P\/?M|Pipe\s*Major|Comp\.?|composed|arr\.?|arranged)\b/i.test(t) ||
     /^[A-Z]\.?\s*[A-Z][a-z]+/.test(t) ||
     /\b[A-Z]\.\s*[A-Z]/.test(t)

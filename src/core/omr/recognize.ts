@@ -897,22 +897,24 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
   }
   /**
    * One printed notehead can raise several distance-transform peaks spread
-   * across its width, each becoming a separate "note". Pipe music is monophonic,
-   * so two melody notes are never within a space of one another — collapse any
-   * such cluster to its strongest peak. Applied only to melody blobs, so a
-   * gracenote cluster (handled separately) is untouched.
+   * across it, each becoming a separate "note". Collapse a cluster of peaks to
+   * its strongest. Melody notes get a wide window — pipe music is monophonic, so
+   * two are never within a space of one another. Gracenotes get a much tighter
+   * one: the little heads of a doubling sit under a space apart and must stay
+   * distinct, but repeated peaks on ONE of them wreck embellishment matching
+   * (a cluster reading [HighA,HighA,HighA,D] fits no pattern).
    */
-  const mergeDuplicates = (bs: Blob[]): Blob[] => {
+  const mergeClose = (bs: Blob[], rx: number, ry: number): Blob[] => {
     const strongestFirst = [...bs].sort((a, b) => b.r - a.r)
     const kept: Blob[] = []
     for (const b of strongestFirst) {
-      if (kept.some((k) => Math.abs(k.x - b.x) < sp * 0.9 && Math.abs(k.y - b.y) < sp * 0.8)) continue
+      if (kept.some((k) => Math.abs(k.x - b.x) < rx && Math.abs(k.y - b.y) < ry)) continue
       kept.push(b)
     }
     return kept
   }
-  const melodyBlobs = mergeDuplicates(dedupeColumns(melody))
-  const smallBlobs = detectEmb ? smalls : []
+  const melodyBlobs = mergeClose(dedupeColumns(melody), sp * 0.9, sp * 0.8)
+  const smallBlobs = detectEmb ? mergeClose(smalls, sp * 0.45, sp * 0.45) : []
 
   // Open (half/whole) noteheads are found separately via their hole. The gaps
   // enclosed between a gracenote cluster's stems and its beams also read as
@@ -960,6 +962,13 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     // Only blobs of gracenote size qualify — below this they are ink specks,
     // beam fragments or staff-line remnants, which otherwise pile up on a note.
     if (s.r < melodyR * 0.38) continue
+    // A gracenote HEAD sits on the staff at its own pitch (a High G gracenote is
+    // on the top line). What floats above the staff is its stem's ~3 flags and
+    // the cluster's beam — and since pitch mapping clamps anything above the
+    // staff to High A, those flags used to read as [HighA, HighA, HighA…] and
+    // stopped any cluster from matching an embellishment.
+    const sPos = staffPos(s)
+    if (sPos > 10.6 || sPos < 1.4) continue
 
     let target: DetectedNote | undefined
     let bestDx = Infinity

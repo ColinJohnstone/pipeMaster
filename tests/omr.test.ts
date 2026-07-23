@@ -232,6 +232,21 @@ describe('OCR header parsing', () => {
     expect(h.composer).toBe('P/M J. MacLeod')
   })
 
+  it('ignores a browser print-to-PDF header/footer', () => {
+    const data = {
+      lines: [
+        line('7/26/26, 2:29 PM   pipeMaster — Bagpipe Sheet Music Editor', 40, 8, 900, 24),
+        line('Robin Adair', 300, 40, 700, 90),
+        line('4/4 March', 60, 100, 200, 122),
+        line('http://localhost:5199/', 40, 960, 300, 978),
+      ],
+    }
+    const h = parseHeader(data)
+    expect(h.title).toBe('Robin Adair')
+    expect(h.tuneType).toBe('March')
+    expect(h.composer).toBeUndefined()
+  })
+
   it('returns nothing usable for an empty scan', () => {
     expect(parseHeader({ lines: [] })).toEqual({})
   })
