@@ -58,7 +58,11 @@ function segmentByBarlines(notes: DetectedNote[], barlines: number[][]): Segment
 /** Mark repeat signs and 1st/2nd endings on the bars they fall on. */
 function applyStructure(
   segments: Segment[],
-  bars: { repeatStart?: boolean; repeatEnd?: boolean; volta?: 1 | 2 }[],
+  bars: {
+    repeatStart?: boolean
+    repeatEnd?: boolean
+    notes: { voltaStart?: 1 | 2; voltaStop?: boolean }[]
+  }[],
   repeats: OmrRepeat[],
   voltas: OmrVolta[],
   sp: number,
@@ -94,12 +98,20 @@ function applyStructure(
     }
   }
   for (const v of voltas) {
-    // Every bar whose notes sit under the bracket gets the ending number.
+    // Bars whose notes sit under the bracket form one ending span; mark its
+    // first note's start and its last note's stop.
+    const covered: number[] = []
     segments.forEach((s, i) => {
       if (s.staffIndex !== v.staffIndex) return
       const cx = (s.notes[0].x + s.notes[s.notes.length - 1].x) / 2
-      if (cx >= v.x0 - sp && cx <= v.x1 + sp) bars[i].volta = v.num
+      if (cx >= v.x0 - sp && cx <= v.x1 + sp) covered.push(i)
     })
+    if (covered.length === 0) continue
+    const firstBar = bars[covered[0]]
+    const lastBar = bars[covered[covered.length - 1]]
+    if (firstBar.notes[0]) firstBar.notes[0].voltaStart = v.num
+    const lastNote = lastBar.notes[lastBar.notes.length - 1]
+    if (lastNote) lastNote.voltaStop = true
   }
 }
 

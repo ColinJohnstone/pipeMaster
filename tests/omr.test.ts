@@ -212,7 +212,9 @@ describe('OMR → Score conversion', () => {
     })
     const bars = score.parts[0].bars
     expect(bars[0].repeatEnd).toBe(true)
-    expect(bars[1].volta).toBe(2)
+    // The 2nd-ending bracket covers bar 1's note — marked on the note now.
+    expect(bars[1].notes[0].voltaStart).toBe(2)
+    expect(bars[1].notes[bars[1].notes.length - 1].voltaStop).toBe(true)
     expect(bars[2].repeatEnd).toBeUndefined()
   })
 })

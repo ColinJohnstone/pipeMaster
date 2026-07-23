@@ -11,6 +11,13 @@ export interface Note {
   tieToNext?: boolean
   /** Tuplet grouping, e.g. 3 for a triplet (3 in the time of 2). */
   tuplet?: number
+  /**
+   * First/second-ending brackets are spans of the note stream, not whole bars —
+   * a 1st and a 2nd ending can share a bar. `voltaStart` marks the first note of
+   * an ending; `voltaStop` marks its last. See core/model/voltas.ts.
+   */
+  voltaStart?: 1 | 2
+  voltaStop?: boolean
 }
 
 export interface Bar {
@@ -20,8 +27,6 @@ export interface Bar {
   timeSig?: TimeSig
   repeatStart?: boolean
   repeatEnd?: boolean
-  /** 1st/2nd time ending this bar belongs to, if any. */
-  volta?: 1 | 2
   /**
    * Anacrusis (pickup) bar: its capacity in crotchet beats, independent of
    * the meter. A leading bar of one quaver has pickup = 0.5, so once that note

@@ -15,7 +15,8 @@ function softBoundary(prev: Bar, next: Bar): boolean {
   if (prev.repeatEnd || next.repeatStart) return false
   if (next.timeSig) return false
   if (next.pickup !== undefined) return false
-  if ((prev.volta ?? 0) !== (next.volta ?? 0)) return false
+  // Ending brackets are carried on the notes themselves, so they travel with a
+  // note when it flows across a barline — no boundary check is needed for them.
   return true
 }
 
@@ -23,7 +24,6 @@ function hasNoMarkers(bar: Bar): boolean {
   return (
     !bar.repeatStart &&
     !bar.repeatEnd &&
-    bar.volta === undefined &&
     bar.timeSig === undefined &&
     bar.pickup === undefined
   )

@@ -8,6 +8,14 @@ import { createNote } from '../src/core/model/create'
 
 const q = { base: 4, dots: 0 } as const
 
+// A single-note ending bar: the note both opens and closes the ending span.
+const endingNote = (pitch: Parameters<typeof createNote>[0], num: 1 | 2) => {
+  const n = createNote(pitch, q)
+  n.voltaStart = num
+  n.voltaStop = true
+  return n
+}
+
 /** A one-part tune whose repeated section has 1st/2nd endings. */
 function scoreWithVoltas(): Score {
   return {
@@ -24,8 +32,8 @@ function scoreWithVoltas(): Score {
         bars: [
           { id: newId('b'), repeatStart: true, notes: [createNote('LowA', q)] }, // 0
           { id: newId('b'), notes: [createNote('B', q)] }, // 1
-          { id: newId('b'), volta: 1, repeatEnd: true, notes: [createNote('C', q)] }, // 2 (1st ending)
-          { id: newId('b'), volta: 2, notes: [createNote('D', q)] }, // 3 (2nd ending)
+          { id: newId('b'), repeatEnd: true, notes: [endingNote('C', 1)] }, // 2 (1st ending)
+          { id: newId('b'), notes: [endingNote('D', 2)] }, // 3 (2nd ending)
         ],
       },
     ],
@@ -41,8 +49,14 @@ describe('playOrder with repeats and voltas', () => {
 
   it('a plain repeat (no voltas) replays the whole section once', () => {
     const s = scoreWithVoltas()
-    delete s.parts[0].bars[2].volta
-    delete s.parts[0].bars[3].volta
+    for (const n of s.parts[0].bars[2].notes) {
+      delete n.voltaStart
+      delete n.voltaStop
+    }
+    for (const n of s.parts[0].bars[3].notes) {
+      delete n.voltaStart
+      delete n.voltaStop
+    }
     s.parts[0].bars[3].repeatEnd = false
     s.parts[0].bars[2].repeatEnd = true
     // Now bars 0..2 are the repeated section; bar 3 follows once.
@@ -74,8 +88,8 @@ describe('playOrder with repeats and voltas', () => {
             { id: newId('b'), repeatStart: true, notes: [createNote('LowA', q)] },
             { id: newId('b'), notes: [createNote('B', q)] },
             { id: newId('b'), notes: [createNote('C', q)] },
-            { id: newId('b'), volta: 1, notes: [createNote('D', q)] },
-            { id: newId('b'), volta: 2, notes: [createNote('E', q)] },
+            { id: newId('b'), notes: [endingNote('D', 1)] },
+            { id: newId('b'), notes: [endingNote('E', 2)] },
             { id: newId('b'), notes: [createNote('F', q)] },
             { id: newId('b'), notes: [createNote('HighG', q)] },
           ],

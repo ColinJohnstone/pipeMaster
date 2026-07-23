@@ -3,6 +3,7 @@ import { useStore } from './state/store'
 import { ScoreView, type CursorPos, type DropTarget } from './render/ScoreView'
 import type { NoteAddress, Score } from './core/model/types'
 import { getNote } from './core/model/types'
+import { voltaSpans, voltaAt } from './core/model/voltas'
 import { rangeAddresses, addrKey } from './core/model/range'
 import type { Duration } from './core/duration'
 import type { EmbellishmentType } from './core/embellishments/registry'
@@ -338,6 +339,16 @@ export default function App() {
   const selBar = s.selection
     ? s.score.parts[s.selection.partIndex]?.bars[s.selection.barIndex]
     : undefined
+  // The ending number covering the selected note, if any (endings are spans of
+  // notes now, so this comes from the note markers, not the bar).
+  const selVolta: 1 | 2 | undefined =
+    s.selection && s.score.parts[s.selection.partIndex]
+      ? voltaAt(
+          voltaSpans(s.score.parts[s.selection.partIndex]),
+          s.selection.barIndex,
+          s.selection.noteIndex,
+        )
+      : undefined
 
   const selectedKeys = React.useMemo(() => {
     if (!s.selection || !s.anchor) return undefined
@@ -668,31 +679,17 @@ export default function App() {
               </button>
               <button
                 disabled={!s.selection}
-                className={selBar?.volta === 1 ? 'active' : ''}
-                title="Mark as 1st ending"
-                onClick={() =>
-                  s.selection &&
-                  s.setVolta(
-                    s.selection.partIndex,
-                    s.selection.barIndex,
-                    selBar?.volta === 1 ? null : 1,
-                  )
-                }
+                className={selVolta === 1 ? 'active' : ''}
+                title="Mark the selected note(s) as a 1st ending"
+                onClick={() => s.selection && s.setVolta(selVolta === 1 ? null : 1)}
               >
                 1st ending
               </button>
               <button
                 disabled={!s.selection}
-                className={selBar?.volta === 2 ? 'active' : ''}
-                title="Mark as 2nd ending"
-                onClick={() =>
-                  s.selection &&
-                  s.setVolta(
-                    s.selection.partIndex,
-                    s.selection.barIndex,
-                    selBar?.volta === 2 ? null : 2,
-                  )
-                }
+                className={selVolta === 2 ? 'active' : ''}
+                title="Mark the selected note(s) as a 2nd ending"
+                onClick={() => s.selection && s.setVolta(selVolta === 2 ? null : 2)}
               >
                 2nd ending
               </button>

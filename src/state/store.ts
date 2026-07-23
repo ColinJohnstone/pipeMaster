@@ -20,6 +20,7 @@ import type { Pitch } from '../core/pitch'
 import { pitchAbove, pitchBelow } from '../core/pitch'
 import type { EmbellishmentType } from '../core/embellishments/registry'
 import { reflowPart } from '../core/model/reflow'
+import { migrateBarVoltas } from '../core/model/voltas'
 import { rangeAddresses, stepAddress, partNoteAddresses } from '../core/model/range'
 import { embellishmentDef } from '../core/embellishments/registry'
 import type { Note } from '../core/model/types'
@@ -80,7 +81,8 @@ export interface EditorState {
   addPart(): void
   deletePart(partIndex: number): void
   toggleRepeat(partIndex: number, barIndex: number, side: 'start' | 'end'): void
-  setVolta(partIndex: number, barIndex: number, volta: 1 | 2 | null): void
+  /** Mark the current note selection (or range) as a 1st/2nd ending, or clear it. */
+  setVolta(volta: 1 | 2 | null): void
   tieSelection(): void
   setBarTimeSig(partIndex: number, barIndex: number, ts: TimeSig | null): void
   setTuplet(tuplet: number | null): void
@@ -271,8 +273,12 @@ export const useStore = create<EditorState>((set, get) => {
         dirtySince: Date.now(),
       }),
 
-    loadScore: (score) =>
-      set({ score, selection: null, anchor: null, undoStack: [], redoStack: [], dirtySince: Date.now() }),
+    loadScore: (score) => {
+      // Older scores stored endings on the whole bar; convert them to the note
+      // spans the app uses now so a loaded tune keeps its 1st/2nd endings.
+      migrateBarVoltas(score)
+      set({ score, selection: null, anchor: null, undoStack: [], redoStack: [], dirtySince: Date.now() })
+    },
 
     insertNote: (partIndex, barIndex, noteIndex, pitch) => {
       const { entryDuration } = get()
@@ -393,13 +399,29 @@ export const useStore = create<EditorState>((set, get) => {
         else bar.repeatEnd = !bar.repeatEnd
       }),
 
-    setVolta: (partIndex, barIndex, volta) =>
+    setVolta: (volta) => {
+      const { score, selection, anchor } = get()
+      if (!selection) return
+      const addrs = anchor ? rangeAddresses(score, anchor, selection) : [selection]
+      if (addrs.length === 0) return
       apply((d) => {
-        const bar = d.parts[partIndex]?.bars[barIndex]
-        if (!bar) return
-        if (volta === null) delete bar.volta
-        else bar.volta = volta
-      }),
+        // Clear any existing ending markers across the selected notes first.
+        for (const a of addrs) {
+          const n = d.parts[a.partIndex]?.bars[a.barIndex]?.notes[a.noteIndex]
+          if (n) {
+            delete n.voltaStart
+            delete n.voltaStop
+          }
+        }
+        if (volta === null) return
+        const first = addrs[0]
+        const last = addrs[addrs.length - 1]
+        const fn = d.parts[first.partIndex]?.bars[first.barIndex]?.notes[first.noteIndex]
+        const ln = d.parts[last.partIndex]?.bars[last.barIndex]?.notes[last.noteIndex]
+        if (fn) fn.voltaStart = volta
+        if (ln) ln.voltaStop = true
+      })
+    },
 
     tieSelection: () => {
       const { score, selection, anchor } = get()

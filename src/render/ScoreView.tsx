@@ -1,5 +1,6 @@
 import React from 'react'
 import type { Score, NoteAddress } from '../core/model/types'
+import { voltaSpans, type VoltaSpan } from '../core/model/voltas'
 import type { Pitch } from '../core/pitch'
 import { STAFF_POSITION, pitchAtPosition } from '../core/pitch'
 import { embellishmentDef } from '../core/embellishments/registry'
@@ -612,6 +613,7 @@ function BarView({
   onPreview,
   onClearPreview,
   tieIn,
+  spans,
 }: {
   laid: LaidBar
   staffTop: number
@@ -624,6 +626,7 @@ function BarView({
   onPreview(p: Preview): void
   onClearPreview(): void
   tieIn: boolean
+  spans: VoltaSpan[]
 }) {
   const barX = MARGIN_X + laid.x
   const rightX = barX + laid.width
@@ -701,27 +704,46 @@ function BarView({
               : 'normal'
         }
       />
-      {laid.bar.volta && (
-        <g>
-          <path
-            d={`M ${barX + 2} ${staffTop - SPACE * 4.6} v ${-SPACE * 1.4} h ${laid.width - 6} ${
-              laid.bar.repeatEnd || laid.bar.volta === 2 ? '' : `v ${SPACE * 1.4}`
-            }`}
-            fill="none"
-            stroke="var(--ink)"
-            strokeWidth={1.2}
-          />
-          <text
-            x={barX + SPACE}
-            y={staffTop - SPACE * 4.8}
-            fontSize={12}
-            fontFamily="Georgia, serif"
-            fill="var(--ink)"
-          >
-            {laid.bar.volta}.
-          </text>
-        </g>
-      )}
+      {spans.map((s, si) => {
+        if (laid.barIndex < s.startBar || laid.barIndex > s.endBar) return null
+        // The notes of this ending that fall in this bar.
+        const lo = laid.barIndex === s.startBar ? s.startNote : 0
+        const hi = laid.barIndex === s.endBar ? s.endNote : Infinity
+        const inBar = laid.notes.filter((ln) => ln.addr.noteIndex >= lo && ln.addr.noteIndex <= hi)
+        if (inBar.length === 0) return null
+        const opensHere = laid.barIndex === s.startBar
+        const closesHere = laid.barIndex === s.endBar
+        // Reach the bar edges where the ending carries on into an adjacent bar,
+        // so a multi-bar bracket reads as one continuous line.
+        const x0 = opensHere ? barX + inBar[0].x - HEAD_W : barX
+        const x1 = closesHere ? barX + inBar[inBar.length - 1].x + HEAD_W : rightX
+        const topY = staffTop - SPACE * 4.6
+        return (
+          <g key={`v${si}`}>
+            <path
+              d={
+                `M ${x0} ${opensHere ? topY : topY - SPACE * 1.4} ` +
+                `${opensHere ? `v ${-SPACE * 1.4} ` : ''}` +
+                `h ${x1 - x0} ${closesHere ? `v ${SPACE * 1.4}` : ''}`
+              }
+              fill="none"
+              stroke="var(--ink)"
+              strokeWidth={1.2}
+            />
+            {opensHere && (
+              <text
+                x={x0 + SPACE * 0.5}
+                y={topY - SPACE * 0.25}
+                fontSize={12}
+                fontFamily="Georgia, serif"
+                fill="var(--ink)"
+              >
+                {s.num}.
+              </text>
+            )}
+          </g>
+        )
+      })}
       <BarNotes
         laid={laid}
         staffTop={staffTop}
@@ -747,6 +769,7 @@ function SystemView({
   onPreview,
   onClearPreview,
   tieInKeys,
+  partSpans,
 }: {
   system: LaidSystem
   contentWidth: number
@@ -759,6 +782,7 @@ function SystemView({
   onPreview(p: Preview): void
   onClearPreview(): void
   tieInKeys: Set<string>
+  partSpans: VoltaSpan[][]
 }) {
   return (
     <g>
@@ -790,11 +814,14 @@ function SystemView({
           onPreview={onPreview}
           onClearPreview={onClearPreview}
           tieIn={tieInKeys.has(`${b.partIndex}:${b.barIndex}`)}
+          spans={partSpans[b.partIndex] ?? EMPTY_SPANS}
         />
       ))}
     </g>
   )
 }
+
+const EMPTY_SPANS: VoltaSpan[] = []
 
 function GhostNote({ preview }: { preview: Preview }) {
   const y = preview.staffTop + positionToY(STAFF_POSITION[preview.pitch])
@@ -841,6 +868,9 @@ export function ScoreView({
   }, [layout, layoutOut])
   const contentWidth = layout.width - MARGIN_X * 2
   const [preview, setPreview] = React.useState<Preview | null>(null)
+
+  // Resolved 1st/2nd ending spans per part, for the volta brackets.
+  const partSpans = React.useMemo(() => score.parts.map((p) => voltaSpans(p)), [score])
 
   // Bars whose previous bar ends with a tie get an incoming half-arc.
   const tieInKeys = React.useMemo(() => {
@@ -900,6 +930,7 @@ export function ScoreView({
           onPreview={setPreview}
           onClearPreview={() => setPreview(null)}
           tieInKeys={tieInKeys}
+          partSpans={partSpans}
         />
       ))}
       {preview && !cursor && <GhostNote preview={preview} />}

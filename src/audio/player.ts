@@ -1,5 +1,6 @@
 import type { Score, NoteAddress } from '../core/model/types'
 import { timeSigForBar } from '../core/model/types'
+import { voltaSpans } from '../core/model/voltas'
 import { barCapacityBeats, isCompound, noteBeats } from '../core/duration'
 import { frequency, type Pitch } from '../core/pitch'
 import { expandEmbellishment } from '../core/embellishments/registry'
@@ -39,6 +40,15 @@ export function playOrder(score: Score): Array<[number, number]> {
   const order: Array<[number, number]> = []
   score.parts.forEach((part, pi) => {
     const bars = part.bars
+    const spans = voltaSpans(part)
+    // The ending number covering a bar. Endings are carried on notes now; for
+    // playback (which sequences whole bars) a bar counts as ending N if it
+    // overlaps span N. A bar split between a 1st and 2nd ending — rare — plays
+    // as the first of them; sub-bar ending playback is a known limitation.
+    const vnum = (bi: number): 1 | 2 | undefined => {
+      for (const s of spans) if (bi >= s.startBar && bi <= s.endBar) return s.num
+      return undefined
+    }
     const push = (i: number) => order.push([pi, i])
     // Each repeat section (keyed by its start bar) fires at most once, so a
     // jump back to the same start can't loop forever.
@@ -51,12 +61,12 @@ export function playOrder(score: Score): Array<[number, number]> {
       if (bar.repeatStart) repeatStart = i
 
       // First/second endings begin at a volta-1 bar.
-      if (bar.volta === 1 && !consumed.has(repeatStart)) {
+      if (vnum(i) === 1 && !consumed.has(repeatStart)) {
         let v1End = i
-        while (v1End + 1 < bars.length && bars[v1End + 1].volta === 1) v1End++
+        while (v1End + 1 < bars.length && vnum(v1End + 1) === 1) v1End++
         let v2Start = v1End + 1
         let v2End = v2Start - 1
-        while (v2End + 1 < bars.length && bars[v2End + 1].volta === 2) v2End++
+        while (v2End + 1 < bars.length && vnum(v2End + 1) === 2) v2End++
 
         for (let k = i; k <= v1End; k++) push(k) // 1st ending
         for (let k = repeatStart; k < i; k++) push(k) // repeat the section

@@ -1,4 +1,5 @@
 import type { Score, Bar, Note } from '../model/types'
+import { voltaSpans } from '../model/voltas'
 import { beats } from '../duration'
 import type { Pitch } from '../pitch'
 import { expandEmbellishment } from '../embellishments/registry'
@@ -132,15 +133,22 @@ function measureXml(
   let out = `    <measure number="${number}">\n`
   if (first) out += attributesXml(score)
 
+  // Endings are note-stream spans; MusicXML brackets them at bar granularity, so
+  // an ending is marked started on the bar its span begins in and stopped on the
+  // bar it ends in.
+  const spans = voltaSpans(score.parts[partIndex])
+  const startSpan = spans.find((s) => s.startBar === barIndex)
+  const endSpan = spans.find((s) => s.endBar === barIndex)
+
   const leftBarline: string[] = []
   if (bar.repeatStart) {
     leftBarline.push(
       `      <barline location="left">\n        <bar-style>heavy-light</bar-style>\n        <repeat direction="forward"/>\n      </barline>\n`,
     )
   }
-  if (bar.volta) {
+  if (startSpan) {
     leftBarline.push(
-      `      <barline location="left">\n        <ending number="${bar.volta}" type="start"/>\n      </barline>\n`,
+      `      <barline location="left">\n        <ending number="${startSpan.num}" type="start"/>\n      </barline>\n`,
     )
   }
   out += leftBarline.join('')
@@ -151,10 +159,10 @@ function measureXml(
   })
 
   const rightBarline: string[] = []
-  if (bar.volta) {
-    const endingType = bar.volta === 1 ? 'stop' : 'discontinue'
+  if (endSpan) {
+    const endingType = endSpan.num === 1 ? 'stop' : 'discontinue'
     rightBarline.push(
-      `      <barline location="right">\n        <ending number="${bar.volta}" type="${endingType}"/>\n` +
+      `      <barline location="right">\n        <ending number="${endSpan.num}" type="${endingType}"/>\n` +
         (bar.repeatEnd
           ? `        <bar-style>light-heavy</bar-style>\n        <repeat direction="backward"/>\n`
           : '') +

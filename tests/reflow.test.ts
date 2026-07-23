@@ -133,15 +133,19 @@ describe('reflowPart — auto bar overflow', () => {
     expect(pitches(s, 1)).toEqual(['D', 'E'])
   })
 
-  it('does not pull a note back across a first/second ending boundary', () => {
+  it('keeps ending markers with their notes when reflowing', () => {
+    // Endings are carried on notes, so a note may flow across a barline and take
+    // its 2nd-ending marker with it — the span stays intact.
     const s = scoreOf([
       [createNote('LowA', q), createNote('B', q), createNote('C', q)],
       [createNote('D', q), createNote('E', q)],
     ])
-    s.parts[0].bars[1].volta = 2
+    s.parts[0].bars[1].notes[0].voltaStart = 2 // D opens a 2nd ending
     reflowPart(s, 0, 0)
-    expect(pitches(s, 0)).toEqual(['LowA', 'B', 'C'])
-    expect(pitches(s, 1)).toEqual(['D', 'E'])
+    // D is pulled back into bar 0; its marker travels with it.
+    expect(pitches(s, 0)).toEqual(['LowA', 'B', 'C', 'D'])
+    const d = s.parts[0].bars[0].notes.find((n) => n.pitch === 'D')
+    expect(d?.voltaStart).toBe(2)
   })
 
   it('does not loop on a single note longer than a bar', () => {

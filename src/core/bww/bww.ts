@@ -129,10 +129,12 @@ export function serializeBww(score: Score): string {
     tokens.push(startsRepeat ? "I!''" : 'I!')
     part.bars.forEach((bar, bi) => {
       if (bi > 0) tokens.push('!')
-      if (bar.volta === 1) tokens.push("'1")
-      if (bar.volta === 2) tokens.push("'2")
-      bar.notes.forEach((n) => tokens.push(noteTokens(n)))
-      if (bar.volta) tokens.push("_'")
+      bar.notes.forEach((n) => {
+        if (n.voltaStart === 1) tokens.push("'1")
+        if (n.voltaStart === 2) tokens.push("'2")
+        tokens.push(noteTokens(n))
+        if (n.voltaStop) tokens.push("_'")
+      })
     })
     tokens.push(endsRepeat ? "''!I" : '!I')
     lines.push(tokens.join(' '))
@@ -228,7 +230,6 @@ export function parseBww(text: string): BwwParseResult {
 
   const pushBar = () => {
     if (bar.notes.length === 0 && !bar.repeatStart && !bar.repeatEnd) return
-    if (volta) bar.volta = volta
     part.bars.push(bar)
     bar = { id: newId('b'), notes: [] }
   }
@@ -257,6 +258,10 @@ export function parseBww(text: string): BwwParseResult {
         if (pendingEmb) {
           note.embellishment = { type: pendingEmb }
           pendingEmb = undefined
+        }
+        if (volta) {
+          note.voltaStart = volta
+          volta = undefined
         }
         if (pendingRepeatStart && part.bars.length === 0 && bar.notes.length === 0) {
           bar.repeatStart = true
@@ -304,7 +309,10 @@ export function parseBww(text: string): BwwParseResult {
         case '!I':
           pushPart(false)
           continue
-        // First/second endings delimit bars themselves — no "!" between them.
+        // First/second endings mark a span of the note stream. In BWW they also
+        // sit at a bar boundary, so keep delimiting bars — but record the ending
+        // on the NOTES (`'1`/`'2` open on the next note, `_'` closes on the last
+        // one), which is what lets pipeMaster place two endings inside one bar.
         case "'1":
           pushBar()
           volta = 1
@@ -313,10 +321,13 @@ export function parseBww(text: string): BwwParseResult {
           pushBar()
           volta = 2
           continue
-        case "_'":
+        case "_'": {
+          const prev = bar.notes[bar.notes.length - 1]
+          if (prev) prev.voltaStop = true
           pushBar()
           volta = undefined
           continue
+        }
         case '^ts':
         case '^te': {
           const last = bar.notes[bar.notes.length - 1]
