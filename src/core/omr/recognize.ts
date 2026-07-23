@@ -67,6 +67,8 @@ const POSITION_TO_PITCH: Record<number, Pitch> = {
 }
 
 const MAX_WIDTH = 1600
+/** Staff spacing below this leaves noteheads too small to resolve reliably. */
+const MIN_SPACING = 9
 
 // -- Basic image ops ---------------------------------------------------------
 
@@ -104,6 +106,44 @@ function otsu(gray: Uint8Array): number {
     }
   }
   return threshold
+}
+
+/**
+ * Cheap look at the staff spacing before any real work, to decide whether the
+ * image needs enlarging. Returns the most common gap between candidate staff
+ * lines, or 0 when the spacing is already adequate (or nothing looks like a
+ * staff, in which case enlarging would not help).
+ */
+function probeSpacing(gray: Uint8Array, w: number, h: number): number {
+  const thr = otsu(gray)
+  const rows: number[] = []
+  for (let y = 0; y < h; y++) {
+    let c = 0
+    const row = y * w
+    for (let x = 0; x < w; x++) if (gray[row + x] < thr) c++
+    rows.push(c)
+  }
+  const lineThresh = w * 0.35
+  const centres: number[] = []
+  let y = 0
+  while (y < h) {
+    if (rows[y] >= lineThresh) {
+      let y2 = y
+      while (y2 < h && rows[y2] >= lineThresh) y2++
+      centres.push((y + y2 - 1) / 2)
+      y = y2
+    } else y++
+  }
+  if (centres.length < 4) return 0
+  const hist = new Map<number, number>()
+  for (let i = 1; i < centres.length; i++) {
+    const k = Math.round(centres[i] - centres[i - 1])
+    if (k >= 2) hist.set(k, (hist.get(k) ?? 0) + 1)
+  }
+  let sp = 0
+  let best = 0
+  for (const [k, n] of hist) if (n > best) [best, sp] = [n, k]
+  return sp > 0 && sp < MIN_SPACING ? sp : 0
 }
 
 // -- Deskew ------------------------------------------------------------------
@@ -807,6 +847,36 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
       }
     }
     gray = small
+    w = nw
+    h = nh
+  } else if (probeSpacing(toGray(source.data, w, h), w, h) > 0) {
+    // Small sources (screenshots, low-resolution downloads) leave the staff only
+    // a few pixels between lines, at which point noteheads are smaller than the
+    // detector's smallest feature and nothing resolves. Enlarge first, with
+    // bilinear sampling so lines and heads stay smooth rather than blocky.
+    // Decided from the measured spacing, so normal scans are left untouched.
+    const found = probeSpacing(toGray(source.data, w, h), w, h)
+    const scale = Math.min(3, MIN_SPACING / found)
+    const nw = Math.round(w * scale)
+    const nh = Math.round(h * scale)
+    const full = toGray(source.data, w, h)
+    const big = new Uint8Array(nw * nh)
+    for (let y = 0; y < nh; y++) {
+      const sy = Math.min(h - 1, y / scale)
+      const y0 = Math.floor(sy)
+      const y1 = Math.min(h - 1, y0 + 1)
+      const fy = sy - y0
+      for (let x = 0; x < nw; x++) {
+        const sx = Math.min(w - 1, x / scale)
+        const x0 = Math.floor(sx)
+        const x1 = Math.min(w - 1, x0 + 1)
+        const fx = sx - x0
+        const a = full[y0 * w + x0] * (1 - fx) + full[y0 * w + x1] * fx
+        const b = full[y1 * w + x0] * (1 - fx) + full[y1 * w + x1] * fx
+        big[y * nw + x] = a * (1 - fy) + b * fy
+      }
+    }
+    gray = big
     w = nw
     h = nh
   } else {
