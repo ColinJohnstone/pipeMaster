@@ -511,6 +511,53 @@ function countBeams(ink: Uint8Array, w: number, h: number, stem: Stem, sp: numbe
 }
 
 /**
+ * Where the music proper begins on a staff — past the clef and, on the first
+ * staff, past the time signature. Both are WIDE blocks of ink spanning almost
+ * the whole staff height, whereas a stem is only a pixel or two wide, so a
+ * minimum width tells them apart. Earlier this was a fixed offset, which either
+ * clipped the first note or (on a wide layout) let the metre digits through to
+ * be read as noteheads or gracenotes.
+ */
+function musicStartX(
+  noStaff: Uint8Array,
+  w: number,
+  h: number,
+  staff: DetectedStaff,
+  sp: number,
+  leftEdge: number,
+): number {
+  const top = Math.max(0, Math.round(staff.lines[0]))
+  const bottom = Math.min(h - 1, Math.round(staff.lines[staff.lines.length - 1]))
+  const from = Math.max(0, Math.round(leftEdge))
+  const limit = Math.min(w - 1, Math.round(leftEdge + sp * 12))
+  const blocks: Array<{ x0: number; x1: number }> = []
+  let runStart = -1
+  for (let x = from; x <= limit; x++) {
+    let minY = -1
+    let maxY = -1
+    for (let y = top; y <= bottom; y++) {
+      if (noStaff[y * w + x]) {
+        if (minY < 0) minY = y
+        maxY = y
+      }
+    }
+    const tall = minY >= 0 && maxY - minY >= sp * 3.2
+    if (tall) {
+      if (runStart < 0) runStart = x
+    } else if (runStart >= 0) {
+      if (x - runStart >= sp * 0.4) blocks.push({ x0: runStart, x1: x - 1 })
+      runStart = -1
+    }
+  }
+  if (runStart >= 0 && limit - runStart >= sp * 0.4) blocks.push({ x0: runStart, x1: limit })
+  let end = leftEdge
+  for (const g of blocks) if (g.x0 <= leftEdge + sp * 8) end = Math.max(end, g.x1)
+  // Every staff opens with a clef, so the music never starts hard against the
+  // left edge — keep a floor even when no block was measured.
+  return Math.max(end + sp * 0.5, leftEdge + sp * 2.5)
+}
+
+/**
  * Barlines: columns of ink running the full height of a staff. A note's stem can
  * be nearly as tall, so columns that sit right beside a detected notehead are
  * dropped — a stem attaches about half a space from its head, while a barline
@@ -573,32 +620,6 @@ function detectBarlines(
     out.splice(worst + 1, 1)
   }
   return out
-}
-
-/**
- * Count horizontal ink bands directly above a notehead — a gracenote leads up to
- * a beam or (in pipe notation) a cluster of ~3 little flags, which sit close
- * above its small head. Melody notes carry their beams below (stems down), so a
- * band count above is a strong "this is a gracenote" signal.
- */
-function flagsAbove(ink: Uint8Array, w: number, h: number, b: Blob, sp: number): number {
-  const x = Math.round(b.x)
-  const top = Math.round(b.y - b.r)
-  let bands = 0
-  let inBand = false
-  for (let k = 1; k <= Math.round(sp * 2.4); k++) {
-    const y = top - k
-    if (y < 0) break
-    const run = hRun(ink, w, h, x, y, 1) + hRun(ink, w, h, x - 1, y, -1)
-    const isBand = run >= sp * 0.45
-    if (isBand && !inBand) {
-      bands++
-      inBand = true
-    } else if (!isBand) {
-      inBand = false
-    }
-  }
-  return bands
 }
 
 /**
@@ -832,14 +853,16 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
   }
   if (leftEdge === w) leftEdge = 0
   // Clef + time signature sit at the start of the line; skip that whole zone.
-  const clefZoneX = leftEdge + sp * 6.5
+  // Per staff: skip its clef, and on the first staff the time signature too.
+  const musicStart = staves.map((s) => musicStartX(noStaff, w, h, s, sp, leftEdge))
 
   const meloRMax = sp * 0.85 // reject over-large blobs (clef bowls, etc.)
 
   /** A blob is a plausible notehead: right size, on the staff, past the clef. */
   const onStaff = (b: Blob): boolean => {
-    if (b.x < clefZoneX) return false // clef / time signature
-    const staff = staves[nearestStaff(staves, b.y)]
+    const si = nearestStaff(staves, b.y)
+    if (b.x < musicStart[si]) return false // clef / time signature on this staff
+    const staff = staves[si]
     const bottom = staff.lines[staff.lines.length - 1]
     const position = (bottom - b.y) / (sp / 2)
     // Bagpipe notes live roughly from Low G to High A; reject anything well
@@ -876,18 +899,6 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
 
   // Stem lookup, memoised — findStem is the workhorse for every classification
   // below. dir=+1 scans downward in image space, dir=-1 upward.
-  const stems = new Map<Blob, Stem>()
-  const stemOf = (b: Blob): Stem => {
-    let s = stems.get(b)
-    if (!s) {
-      s = findStem(noStaff, w, h, b.x, b.y, b.r, sp)
-      stems.set(b, s)
-    }
-    return s
-  }
-  const hasUpStem = (b: Blob) => stemOf(b).dir === -1 && stemOf(b).len >= sp * 0.9
-  const longDownStem = (b: Blob) => stemOf(b).dir === 1 && stemOf(b).len >= sp * 2.0
-
   // --- Time signature -------------------------------------------------------
   // The metre digits (6-over-8, 2-over-4, …) sit at the start of the first staff
   // and read as two stacked "noteheads". They are a vertical pair of similar-
@@ -940,12 +951,20 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
   // Notehead-sized candidates only (≥0.2 sp) — smaller blobs are dots or the
   // thin edges of a ring (open notehead) and must not be promoted to melody.
   const cands = blobs.filter((b) => onStaff(b) && !timeSig.has(b) && b.r >= sp * 0.2 && b.r <= meloRMax)
+  // Calibrate the melody-notehead size from notes with a clear DOWNWARD stem.
+  // Those are unambiguously melody, because a gracenote's stem runs up to its
+  // beam — which makes them a clean sample even though the reverse is NOT true:
+  // printed sources stem notes below the middle line upwards, so an up-stem must
+  // never be used to reject a melody note (that discarded whole beamed groups).
   const downRadii = cands
-    .filter(longDownStem)
+    .filter((b) => {
+      const s = findStem(noStaff, w, h, b.x, b.y, b.r, sp)
+      return s.dir === 1 && s.len >= sp * 2.0
+    })
     .map((b) => b.r)
     .sort((a, b) => a - b)
   const melodyR = downRadii.length ? downRadii[downRadii.length >> 1] : sp * 0.42
-  const graceR = melodyR * 0.78 * noteheadScale // below this → gracenote, whatever the stem reads
+  const graceR = melodyR * 0.78 * noteheadScale
 
   const isMelody = (b: Blob): boolean => {
     // The bagpipe scale runs Low G (position 2) to High A (position 10). Anything
@@ -953,11 +972,14 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     // note — on real scans this alone accounts for most gracenote leakage.
     const pos = staffPos(b)
     if (pos > 10.6 || pos < 1.4) return false
-    if (b.r < graceR) return false // noticeably smaller → gracenote
-    if (hasUpStem(b)) return false // up-stem → gracenote
-    // A smallish blob capped by flags is a gracenote even if full-ish size; the
-    // size gate above already protects genuine (larger) melody noteheads.
-    if (b.r < melodyR * 0.92 && flagsAbove(noStaff, w, h, b, sp) >= 2) return false
+    if (b.r < graceR) return false // noticeably smaller than a notehead → gracenote
+    // An up-stem running to a beam marks a gracenote. NOTE: this is imperfect —
+    // printed sources also stem melody notes below the middle line upwards, so
+    // some beamed melody notes are lost here. Size is what mainly separates the
+    // two; loosening this costs more (gracenotes promoted to melody) than it
+    // gains, measured across the sample scans.
+    const s = findStem(noStaff, w, h, b.x, b.y, b.r, sp)
+    if (s.dir === -1 && s.len >= sp * 0.9) return false
     return true
   }
 
