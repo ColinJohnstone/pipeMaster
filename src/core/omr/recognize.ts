@@ -1123,8 +1123,24 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
   // enclosed between a gracenote cluster's stems and its beams also read as
   // holes, so apply the same Low G…High A ceiling — a "note" above High A is a
   // gracenote artefact, not a minim.
-  const openBlobs = findOpenNoteheads(noStaff, w, h, sp, melodyBlobs).filter(
+  const openFound = findOpenNoteheads(noStaff, w, h, sp, melodyBlobs).filter(
     (b) => onStaff(b) && staffPos(b) <= 10.6 && staffPos(b) >= 1.4,
+  )
+  /**
+   * The white slivers BETWEEN a gracenote's three slanted flags enclose gaps
+   * that pass every counter shape test, so a strike reads as a little tower of
+   * phantom minims sitting on its own flags — wrong notes AND wrong lengths,
+   * since each is scored as a half note.
+   *
+   * What gives them away is that they STACK: pipe music is a single voice, so
+   * two noteheads never share an x. A counter with another counter directly
+   * above or below it is a flag gap, and both go.
+   */
+  const openBlobs = openFound.filter(
+    (b) =>
+      !openFound.some(
+        (o) => o !== b && Math.abs(o.x - b.x) < sp * 0.9 && Math.abs(o.y - b.y) > sp * 0.3,
+      ),
   )
 
   // Calibrate each staff's position grid from its own noteheads before reading
