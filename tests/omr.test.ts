@@ -269,12 +269,19 @@ describe('matchEmbellishment (reverse lookup against the registry)', () => {
   it('matches embellishments from the gracenotes actually drawn on the page', () => {
     // An expansion is the engraved sequence, and it may include a gracenote at
     // the melody note's own pitch: a doubling on C is drawn High G, C, D — three
-    // little heads — and a birl on Low A is drawn Low G, Low A, Low G.
+    // little heads — and a birl on Low A is drawn Low A, Low G, Low A, Low G.
     expect(matchEmbellishment('C', ['HighG', 'C', 'D'])?.type).toBe('doubling')
     expect(matchEmbellishment('F', ['HighG', 'F', 'HighG'])?.type).toBe('doubling')
-    expect(matchEmbellishment('LowA', ['LowG', 'LowA', 'LowG'])?.type).toBe('birl')
+    expect(matchEmbellishment('LowA', ['LowA', 'LowG', 'LowA', 'LowG'])?.type).toBe('birl')
     expect(matchEmbellishment('LowA', ['LowG', 'D', 'LowG'])?.type).toBe('grip')
     expect(matchEmbellishment('C', ['LowG', 'D', 'LowG'])?.type).toBe('grip')
+  })
+
+  it('tells a birl from a G gracenote birl by its leading High G', () => {
+    expect(matchEmbellishment('LowA', ['LowA', 'LowG', 'LowA', 'LowG'])?.type).toBe('birl')
+    expect(matchEmbellishment('LowA', ['HighG', 'LowA', 'LowG', 'LowA', 'LowG'])?.type).toBe(
+      'gGraceBirl',
+    )
   })
 
   it('tells a doubling from a half doubling by its leading gracenote', () => {

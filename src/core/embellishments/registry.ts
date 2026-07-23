@@ -66,6 +66,13 @@ const DOUBLING: Partial<Record<Pitch, Pitch[]>> = {
   HighA: ['HighA', 'HighG'],
 }
 
+/**
+ * A birl on Low A: four gracenotes, Low A / Low G twice over. The G-gracenote
+ * and thumb birls are the same movement with a High G or High A in front, so
+ * all three come from this one sequence and cannot drift apart.
+ */
+const BIRL: Pitch[] = ['LowA', 'LowG', 'LowA', 'LowG']
+
 /** The cutting gracenote of a strike on each melody pitch. */
 const STRIKE: Partial<Record<Pitch, Pitch>> = {
   LowA: 'LowG',
@@ -237,23 +244,21 @@ export const EMBELLISHMENTS: EmbellishmentDef[] = [
     label: 'Birl',
     short: 'Birl',
     category: 'Movements',
-    expand: (m) => (m === 'LowA' ? ['LowG', 'LowA', 'LowG'] : null),
+    expand: (m) => (m === 'LowA' ? [...BIRL] : null),
   },
   {
     type: 'gGraceBirl',
     label: 'G gracenote birl',
     short: 'GBirl',
     category: 'Movements',
-    expand: (m) =>
-      m === 'LowA' ? ['HighG', 'LowA', 'LowG', 'LowA', 'LowG'] : null,
+    expand: (m) => (m === 'LowA' ? ['HighG', ...BIRL] : null),
   },
   {
     type: 'thumbBirl',
     label: 'Thumb birl',
     short: 'TBirl',
     category: 'Movements',
-    expand: (m) =>
-      m === 'LowA' ? ['HighA', 'LowA', 'LowG', 'LowA', 'LowG'] : null,
+    expand: (m) => (m === 'LowA' ? ['HighA', ...BIRL] : null),
   },
   {
     type: 'throwD',
