@@ -1157,6 +1157,14 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     // Only blobs of gracenote size qualify — below this they are ink specks,
     // beam fragments or staff-line remnants, which otherwise pile up on a note.
     if (s.r < melodyR * 0.38) continue
+    // Tell a head from the cluster's BEAM by shape rather than position. A head
+    // is compact — about a notehead wide — while a beam is a long horizontal
+    // run, and sampling one at several points along its length is what produced
+    // clusters like [F,F,F] where a grip's Low G and D should have been.
+    const runW =
+      hRun(noStaff, w, h, Math.round(s.x), Math.round(s.y), 1) +
+      hRun(noStaff, w, h, Math.round(s.x) - 1, Math.round(s.y), -1)
+    if (runW > sp * 1.6) continue
     // A gracenote HEAD sits on the staff at its own pitch (a High G gracenote is
     // on the top line). What floats above the staff is its stem's ~3 flags and
     // the cluster's beam — and since pitch mapping clamps anything above the
