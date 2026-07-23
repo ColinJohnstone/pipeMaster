@@ -108,6 +108,58 @@ function toGray(data: Uint8ClampedArray, w: number, h: number): Uint8Array {
   return g
 }
 
+/**
+ * Sauvola adaptive threshold: decide ink per pixel against the mean and spread
+ * of a local window rather than one page-wide cut. A photo lit unevenly, a grey
+ * photocopy, or a shadow across the page defeats a single Otsu threshold — half
+ * the staff drops out — but a local threshold tracks the background wherever it
+ * drifts. `thresh = mean * (1 + k*(std/128 - 1))`: in a flat white region the
+ * spread is ~0 so the bar sits well below white (nothing is ink); across an
+ * edge the spread rises and the bar climbs toward the mean (the darker side is
+ * ink). Local mean and variance come from integral images, so this stays O(wh).
+ */
+function sauvola(gray: Uint8Array, w: number, h: number): Uint8Array {
+  const r = Math.max(8, Math.min(30, Math.round(Math.min(w, h) / 45))) // window radius
+  const k = 0.2
+  // Integral images of the value and its square (padded by one row/col).
+  const iw = w + 1
+  const sum = new Float64Array(iw * (h + 1))
+  const sq = new Float64Array(iw * (h + 1))
+  for (let y = 0; y < h; y++) {
+    let rs = 0
+    let rsq = 0
+    for (let x = 0; x < w; x++) {
+      const v = gray[y * w + x]
+      rs += v
+      rsq += v * v
+      const a = (y + 1) * iw + (x + 1)
+      sum[a] = sum[y * iw + (x + 1)] + rs
+      sq[a] = sq[y * iw + (x + 1)] + rsq
+    }
+  }
+  const ink = new Uint8Array(w * h)
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.max(0, y - r)
+    const y1 = Math.min(h - 1, y + r)
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.max(0, x - r)
+      const x1 = Math.min(w - 1, x + r)
+      const area = (x1 - x0 + 1) * (y1 - y0 + 1)
+      const A = y0 * iw + x0
+      const B = y0 * iw + (x1 + 1)
+      const C = (y1 + 1) * iw + x0
+      const D = (y1 + 1) * iw + (x1 + 1)
+      const s = sum[D] - sum[B] - sum[C] + sum[A]
+      const sqs = sq[D] - sq[B] - sq[C] + sq[A]
+      const mean = s / area
+      const std = Math.sqrt(Math.max(0, sqs / area - mean * mean))
+      const thresh = mean * (1 + k * (std / 128 - 1))
+      ink[y * w + x] = gray[y * w + x] < thresh ? 1 : 0
+    }
+  }
+  return ink
+}
+
 function otsu(gray: Uint8Array): number {
   const hist = new Array(256).fill(0)
   for (const v of gray) hist[v]++
@@ -1075,7 +1127,21 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     ink = binOf(gray)
   }
 
-  const staves = detectStaves(ink, w, h, warnings)
+  let staves = detectStaves(ink, w, h, warnings)
+  // A single page-wide Otsu cut fails under uneven light or a shadow across the
+  // scan — the staves come out empty. Fall back to an adaptive local threshold,
+  // which tracks the drifting background. It runs only when the plain threshold
+  // found nothing, so it can rescue a hard photo without disturbing the clean
+  // scans the global cut already handles well.
+  if (staves.length === 0) {
+    const adaptive = sauvola(gray, w, h)
+    const rescued = detectStaves(adaptive, w, h, [])
+    if (rescued.length > 0) {
+      ink = adaptive
+      staves = rescued
+      warnings.length = 0
+    }
+  }
   if (staves.length === 0) {
     return {
       notes: [],
