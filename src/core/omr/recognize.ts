@@ -1195,9 +1195,15 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     // a head — the others are flags, and taking one of those reads the pitch a
     // step or more too high (a High G gracenote arriving as High A, which turns
     // every doubling into a thumb doubling).
+    // The reach sideways has to cover the stem, which rises from the head's
+    // RIGHT edge, so a flag sits offset from the head it belongs to rather than
+    // directly over it. At 0.4 the flags fell outside and every single gracenote
+    // gained a phantom twin exactly one space above it — [D] read as [D,F], a
+    // strike's [LowG] as [LowG,B]. Distinct heads in a cluster are ~1.5 apart,
+    // so 0.7 cannot swallow a real neighbour.
     if (
       smallBlobs.some(
-        (o) => o !== s && Math.abs(o.x - s.x) < sp * 0.4 && o.y > s.y + sp * 0.3 && o.y < s.y + sp * 3,
+        (o) => o !== s && Math.abs(o.x - s.x) < sp * 0.7 && o.y > s.y + sp * 0.3 && o.y < s.y + sp * 3,
       )
     )
       continue
