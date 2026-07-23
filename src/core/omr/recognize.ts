@@ -433,12 +433,34 @@ function findBlobs(dt: Float32Array, w: number, h: number, minR: number): Blob[]
   return kept
 }
 
-function pitchForY(staff: DetectedStaff, y: number): Pitch {
-  const bottom = staff.lines[staff.lines.length - 1]
-  const half = staff.spacing / 2
-  let position = Math.round((bottom - y) / half)
+/**
+ * Staff position of a y, corrected by that staff's measured phase (see
+ * staffPhase). Noteheads only ever sit on integer positions, so the phase says
+ * how far the detected line geometry is drifting from where the notes actually
+ * are.
+ */
+function positionAt(staff: DetectedStaff, y: number, phase = 0): number {
+  return (staff.lines[staff.lines.length - 1] - y) / (staff.spacing / 2) - phase
+}
+
+function pitchForY(staff: DetectedStaff, y: number, phase = 0): Pitch {
+  let position = Math.round(positionAt(staff, y, phase))
   position = Math.max(2, Math.min(10, position))
   return POSITION_TO_PITCH[position]
+}
+
+/**
+ * How far a staff's computed positions sit from the whole numbers they should
+ * land on. Line centres come from thresholded row runs, so thick or soft-edged
+ * lines bias the geometry by a fraction of a space; left uncorrected that
+ * fraction pushes notes across a rounding boundary and every D reads as a C.
+ * The notes themselves reveal the true grid: take the median offset from a whole
+ * position and subtract it.
+ */
+function staffPhase(positions: number[]): number {
+  if (positions.length < 3) return 0
+  const frac = positions.map((p) => p - Math.round(p)).sort((a, b) => a - b)
+  return frac[frac.length >> 1]
 }
 
 function nearestStaff(staves: DetectedStaff[], y: number): number {
@@ -1089,6 +1111,14 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     (b) => onStaff(b) && staffPos(b) <= 10.6 && staffPos(b) >= 1.4,
   )
 
+  // Calibrate each staff's position grid from its own noteheads before reading
+  // any pitch off it — see staffPhase.
+  const phases = staves.map((s, si) =>
+    staffPhase(
+      melodyBlobs.filter((b) => nearestStaff(staves, b.y) === si).map((b) => positionAt(s, b.y)),
+    ),
+  )
+
   // Build melody notes with a detected duration.
   const notes: DetectedNote[] = [
     ...melodyBlobs.map((b) => ({ b, filled: true })),
@@ -1096,7 +1126,7 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
   ].map(({ b, filled }) => {
     const staffIndex = nearestStaff(staves, b.y)
     return {
-      pitch: pitchForY(staves[staffIndex], b.y),
+      pitch: pitchForY(staves[staffIndex], b.y, phases[staffIndex]),
       x: b.x,
       y: b.y,
       staffIndex,
@@ -1132,7 +1162,7 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     // the cluster's beam — and since pitch mapping clamps anything above the
     // staff to High A, those flags used to read as [HighA, HighA, HighA…] and
     // stopped any cluster from matching an embellishment.
-    const sPos = staffPos(s)
+    const sPos = positionAt(staves[staff], s.y, phases[staff])
     if (sPos > 10.6 || sPos < 1.4) continue
     // A notehead sits ON a line or IN a space — never straddling one. Fragments
     // of a cluster's beams land at arbitrary heights, so anything that does not
@@ -1156,17 +1186,21 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     for (const n of notes) {
       if (n.staffIndex !== staff) continue
       const dx = n.x - s.x // note is to the right of the gracenote
-      // Gracenotes sit close to the LEFT of their note and above / beside it,
-      // never below or on top of it — this rejects stem-tip, beam, and
-      // ring/stem-junction artifacts that fall under the melody line.
-      if (s.y > n.y + sp * 0.9) continue
-      if (s.y < n.y - sp * 4.5) continue // far above: belongs to nothing here
+      // Gracenotes sit close to the LEFT of their note, at any height. They are
+      // NOT confined to above it: a grip, throw, birl or taorluath is built on a
+      // Low G gracenote, which sits near the bottom of the staff and so falls
+      // well below a note like D or E. Rejecting anything under the melody line
+      // silently removed every one of those, which is why single (high) G
+      // gracenotes read correctly while the combined embellishments never did.
+      // Artefacts below the staff are already excluded by the Low G…High A band.
+      if (Math.abs(s.y - n.y) > sp * 5) continue
       if (dx > sp * 0.35 && dx < sp * 3.5 && dx < bestDx) {
         bestDx = dx
         target = n
       }
     }
-    if (target) target.graces.push({ pitch: pitchForY(staves[staff], s.y), x: s.x, y: s.y })
+    if (target)
+      target.graces.push({ pitch: pitchForY(staves[staff], s.y, phases[staff]), x: s.x, y: s.y })
   }
 
   // Reverse-match each gracenote cluster to an embellishment.
