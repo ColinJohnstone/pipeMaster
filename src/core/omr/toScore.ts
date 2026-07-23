@@ -115,44 +115,6 @@ function applyStructure(
   }
 }
 
-/** Every note length pipeMaster can represent, with its value in beats. */
-const LEGAL_DURATIONS: Array<{ base: DetectedNote['base']; dots: 0 | 1; beats: number }> = [
-  { base: 32, dots: 0, beats: 0.125 },
-  { base: 16, dots: 0, beats: 0.25 },
-  { base: 16, dots: 1, beats: 0.375 },
-  { base: 8, dots: 0, beats: 0.5 },
-  { base: 8, dots: 1, beats: 0.75 },
-  { base: 4, dots: 0, beats: 1 },
-  { base: 4, dots: 1, beats: 1.5 },
-  { base: 2, dots: 0, beats: 2 },
-  { base: 2, dots: 1, beats: 3 },
-]
-
-/**
- * Re-read a bar's note lengths from how the engraver spaced them. Printed music
- * allots horizontal room in proportion to duration, so a note's share of the
- * bar's width estimates its share of the bar's beats. Beam counting is the
- * primary signal, but it misreads the odd note; this is only consulted when a
- * bar does not add up, and only adopted when the spacing-derived lengths land
- * exactly on the meter — otherwise the original reading stands.
- */
-function fitBarBySpacing(seg: Segment, capacity: number): Array<{ base: DetectedNote['base']; dots: 0 | 1 }> | null {
-  const ns = seg.notes
-  if (ns.length < 2 || seg.endX === undefined) return null
-  const widths = ns.map((n, i) => (i + 1 < ns.length ? ns[i + 1].x : seg.endX!) - n.x)
-  if (widths.some((wd) => wd <= 0)) return null
-  const total = widths.reduce((a, b) => a + b, 0)
-  if (total <= 0) return null
-  const snapped = widths.map((wd) => {
-    const est = (capacity * wd) / total
-    let best = LEGAL_DURATIONS[0]
-    for (const l of LEGAL_DURATIONS) if (Math.abs(l.beats - est) < Math.abs(best.beats - est)) best = l
-    return best
-  })
-  const sum = snapped.reduce((a, s) => a + s.beats, 0)
-  return Math.abs(sum - capacity) < 1e-6 ? snapped.map((s) => ({ base: s.base, dots: s.dots })) : null
-}
-
 /**
  * Guess the time signature from the music itself: read the notes off the page,
  * split them at the detected barlines, and see how many beats a full bar holds.
@@ -232,11 +194,11 @@ export function omrToScore(
   const segments = meta?.barlines?.length ? segmentByBarlines(notes, meta.barlines) : null
   if (segments && segments.length > 0) {
     for (const seg of segments) {
-      const read = seg.notes.map((n) => ({ base: n.base, dots: (n.dotted ? 1 : 0) as 0 | 1 }))
-      const readTotal = read.reduce((a, d) => a + beats(d), 0)
-      // Only second-guess the beam reading when the bar does not add up.
-      const fitted = Math.abs(readTotal - cap) < 1e-6 ? null : fitBarBySpacing(seg, cap)
-      const durs = fitted ?? read
+      // Keep the note lengths exactly as read from the beams and stems — the
+      // same values shown on the review screen. Re-deriving a whole bar's
+      // lengths from spacing to force it onto the meter changed notes that were
+      // read correctly, so the import no longer matches what you reviewed.
+      const durs = seg.notes.map((n) => ({ base: n.base, dots: (n.dotted ? 1 : 0) as 0 | 1 }))
       bars.push({
         id: newId('b'),
         notes: seg.notes.map((n, i) => createNote(n.pitch, durs[i], n.embellishment)),
