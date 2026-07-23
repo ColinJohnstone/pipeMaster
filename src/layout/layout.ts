@@ -181,13 +181,13 @@ export function layoutScore(score: Score): ScoreLayout {
 
   // Break into systems: parts always start a new line (pipe convention),
   // at most 4 bars per line, wrap early only if genuinely over-full.
-  const systems: LaidSystem[] = []
+  const groups: MeasuredBar[][] = []
   let current: MeasuredBar[] = []
   let currentNatural = 0
 
   const flush = () => {
     if (current.length === 0) return
-    systems.push(buildSystem(current, systems.length))
+    groups.push(current)
     current = []
     currentNatural = 0
   }
@@ -203,6 +203,22 @@ export function layoutScore(score: Score): ScoreLayout {
     currentNatural += mb.naturalWidth
   }
   flush()
+
+  // A single bar stranded on the last line of a part reads as a mistake. When
+  // that happens, hand it a neighbour from the line above (4,1 → 3,2), as long
+  // as that line has enough to spare and the two lines belong to the same part.
+  // A genuine one-bar part is left alone.
+  for (let g = 1; g < groups.length; g++) {
+    const grp = groups[g]
+    const prev = groups[g - 1]
+    const lastOfPart = g === groups.length - 1 || groups[g + 1][0].barIndex === 0
+    const sndPart = grp[0].barIndex === 0
+    if (grp.length === 1 && lastOfPart && !sndPart && prev.length >= 3) {
+      grp.unshift(prev.pop()!)
+    }
+  }
+
+  const systems: LaidSystem[] = groups.map((grp, i) => buildSystem(grp, i))
 
   function buildSystem(mbs: MeasuredBar[], systemIndex: number): LaidSystem {
     const staffTop = HEADER_HEIGHT + systemIndex * SYSTEM_HEIGHT + STAFF_TOP_IN_SYSTEM
