@@ -70,10 +70,12 @@ const MAX_WIDTH = 1600
 /** Staff spacing below this leaves noteheads too small to resolve reliably. */
 const MIN_SPACING = 9
 
-// Gracenote-to-note attachment, in staff spaces. A head within SEED of a note
-// starts that note's group; a head within GAP of one already in the group joins
-// it, up to MAX from the note overall. Beamed gracenotes are spaced ~1.5 apart
-// while a cluster sits ~2 clear of its note, so GAP walks a group and stops.
+// Gracenote-to-note attachment, in staff spaces. A head between MIN and SEED of
+// a note starts that note's group; a head within GAP of one already in the group
+// joins it, up to MAX from the note overall. Beamed gracenotes are spaced ~1.5
+// apart while a cluster sits ~2 clear of its note, so GAP walks a group and
+// stops at its left edge instead of running into the previous note's.
+const CLUSTER_MIN = 1.2
 const CLUSTER_SEED = 4.6
 const CLUSTER_GAP = 2
 const CLUSTER_MAX = 8
@@ -1185,7 +1187,9 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     // of a cluster's beams land at arbitrary heights, so anything that does not
     // settle on a staff step is not a gracenote head. Dropping them is what lets
     // a doubling or birl read as its own pattern instead of a run of noise.
-    if (Math.abs(sPos - Math.round(sPos)) > 0.3) continue
+    // The allowance has to cover a gracenote head's own measurement noise: real
+    // ones were landing at 0.31 and 0.34 off their step and being thrown away.
+    if (Math.abs(sPos - Math.round(sPos)) > 0.38) continue
     // A gracenote's head is the BOTTOM of it: the stem and its three flags rise
     // above. So where several candidates stack at the same x, only the lowest is
     // a head — the others are flags, and taking one of those reads the pitch a
@@ -1232,7 +1236,12 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
       // gracenotes read correctly while the combined embellishments never did.
       // Artefacts below the staff are already excluded by the Low G…High A band.
       if (Math.abs(s.y - n.y) > sp * 5) continue
-      if (dx > sp * 0.35 && dx < sp * CLUSTER_SEED && dx < bestDx) {
+      // Keep clear of the note's own width. A gracenote head cannot sit closer
+      // than about a notehead from the note it leads into, but the flag bundle
+      // of a strike sometimes raises a phantom "melody note" right on top of the
+      // gracenote — and being half a space away, that phantom used to win the
+      // nearest-note contest and swallow the strike's only gracenote.
+      if (dx > sp * CLUSTER_MIN && dx < sp * CLUSTER_SEED && dx < bestDx) {
         bestDx = dx
         target = n
       }
