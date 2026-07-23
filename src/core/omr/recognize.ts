@@ -1064,6 +1064,22 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     // stopped any cluster from matching an embellishment.
     const sPos = staffPos(s)
     if (sPos > 10.6 || sPos < 1.4) continue
+    // A notehead sits ON a line or IN a space — never straddling one. Fragments
+    // of a cluster's beams land at arbitrary heights, so anything that does not
+    // settle on a staff step is not a gracenote head. Dropping them is what lets
+    // a doubling or birl read as its own pattern instead of a run of noise.
+    if (Math.abs(sPos - Math.round(sPos)) > 0.3) continue
+    // A gracenote's head is the BOTTOM of it: the stem and its three flags rise
+    // above. So where several candidates stack at the same x, only the lowest is
+    // a head — the others are flags, and taking one of those reads the pitch a
+    // step or more too high (a High G gracenote arriving as High A, which turns
+    // every doubling into a thumb doubling).
+    if (
+      smallBlobs.some(
+        (o) => o !== s && Math.abs(o.x - s.x) < sp * 0.4 && o.y > s.y + sp * 0.3 && o.y < s.y + sp * 3,
+      )
+    )
+      continue
 
     let target: DetectedNote | undefined
     let bestDx = Infinity

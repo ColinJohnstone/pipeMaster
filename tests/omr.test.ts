@@ -263,6 +263,23 @@ describe('matchEmbellishment (reverse lookup against the registry)', () => {
     expect(matchEmbellishment('LowA', ['LowG', 'D', 'LowG', 'E'])?.type).toBe('taorluath')
   })
 
+  // An expansion can include the melody note itself (a doubling on C expands to
+  // High G, C, D) but that note is played, not drawn — the page shows only the
+  // two little notes. Matching has to work from what is actually written.
+  it('matches embellishments from the gracenotes actually drawn on the page', () => {
+    expect(matchEmbellishment('C', ['HighG', 'D'])?.type).toBe('doubling')
+    expect(matchEmbellishment('F', ['HighG', 'HighG'])?.type).toBe('doubling')
+    expect(matchEmbellishment('LowA', ['LowG', 'LowG'])?.type).toBe('birl')
+    expect(matchEmbellishment('LowA', ['LowG', 'D', 'LowG'])?.type).toBe('grip')
+    expect(matchEmbellishment('C', ['LowG', 'D', 'LowG'])?.type).toBe('grip')
+  })
+
+  it('does not confuse a doubling with a thumb doubling', () => {
+    // These differ only in the first gracenote: High G vs High A.
+    expect(matchEmbellishment('C', ['HighG', 'D'])?.type).toBe('doubling')
+    expect(matchEmbellishment('C', ['HighA', 'D'])?.type).toBe('thumbDoubling')
+  })
+
   it('tolerates one missed gracenote', () => {
     // Doubling on D is [HighG, D, E]; drop the middle D.
     expect(matchEmbellishment('D', ['HighG', 'E'])?.type).toBe('doubling')
