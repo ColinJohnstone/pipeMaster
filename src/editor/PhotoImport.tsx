@@ -447,7 +447,13 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
     } catch {
       /* best-effort */
     }
-    onImport(omrToScore(notes, ts, title.trim() || 'Imported from photo', { composer: composer.trim(), tuneType: tuneType.trim() }))
+    onImport(
+      omrToScore(notes, ts, title.trim() || 'Imported from photo', {
+        composer: composer.trim(),
+        tuneType: tuneType.trim(),
+        barlines: result.barlines,
+      }),
+    )
     onClose()
   }
 

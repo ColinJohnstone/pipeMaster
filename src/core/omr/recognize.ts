@@ -42,6 +42,8 @@ export interface DetectedStaff {
 export interface OmrResult {
   notes: DetectedNote[]
   staves: DetectedStaff[]
+  /** Barline x positions per staff, so bars survive a misread note length. */
+  barlines: number[][]
   width: number
   height: number
   /** Degrees the image was rotated to straighten the staves. */
@@ -509,6 +511,71 @@ function countBeams(ink: Uint8Array, w: number, h: number, stem: Stem, sp: numbe
 }
 
 /**
+ * Barlines: columns of ink running the full height of a staff. A note's stem can
+ * be nearly as tall, so columns that sit right beside a detected notehead are
+ * dropped — a stem attaches about half a space from its head, while a barline
+ * stands clear of the music. Adjacent columns (thick and repeat barlines) merge
+ * into one. Knowing where the bars actually are means bar structure survives
+ * even when a note's duration is misread.
+ */
+function detectBarlines(
+  ink: Uint8Array,
+  w: number,
+  h: number,
+  staff: DetectedStaff,
+  sp: number,
+  noteXs: number[],
+): number[] {
+  const top = Math.max(0, Math.round(staff.lines[0]))
+  const bottom = Math.min(h - 1, Math.round(staff.lines[staff.lines.length - 1]))
+  const band = bottom - top + 1
+  if (band < 4) return []
+  const cols: number[] = []
+  for (let x = 0; x < w; x++) {
+    let c = 0
+    for (let y = top; y <= bottom; y++) if (ink[y * w + x]) c++
+    if (c >= band * 0.92) cols.push(x)
+  }
+  const merged: number[] = []
+  for (let i = 0; i < cols.length; ) {
+    let j = i
+    while (j + 1 < cols.length && cols[j + 1] - cols[j] <= Math.max(2, sp * 0.5)) j++
+    merged.push((cols[i] + cols[j]) / 2)
+    i = j + 1
+  }
+  // A tall stem is the main impostor. Measured on real scans, stems land within
+  // ~0.85 space of their notehead while a genuine barline stands at least ~1.4
+  // spaces clear of the nearest note, so this cleanly separates the two.
+  const clear = merged.filter((x) => !noteXs.some((nx) => Math.abs(nx - x) < sp * 1.1))
+  // A double or repeat barline is several lines side by side but marks ONE bar
+  // boundary. Real bars are many spaces wide, so anything within three spaces
+  // collapses to a single division.
+  const out: number[] = []
+  for (let i = 0; i < clear.length; ) {
+    let j = i
+    while (j + 1 < clear.length && clear[j + 1] - clear[j] <= sp * 3) j++
+    out.push((clear[i] + clear[j]) / 2)
+    i = j + 1
+  }
+
+  // Bars across one system are of comparable width. A gap far narrower than the
+  // rest is not a bar — it is a leftover double line or a stray vertical — so
+  // drop the line that created it and re-check.
+  for (;;) {
+    if (out.length < 3) break
+    const gaps: number[] = []
+    for (let i = 1; i < out.length; i++) gaps.push(out[i] - out[i - 1])
+    const sorted = [...gaps].sort((a, b) => a - b)
+    const median = sorted[sorted.length >> 1]
+    let worst = -1
+    for (let i = 0; i < gaps.length; i++) if (gaps[i] < median * 0.4 && (worst < 0 || gaps[i] < gaps[worst])) worst = i
+    if (worst < 0) break
+    out.splice(worst + 1, 1)
+  }
+  return out
+}
+
+/**
  * Count horizontal ink bands directly above a notehead — a gracenote leads up to
  * a beam or (in pipe notation) a cluster of ~3 little flags, which sit close
  * above its small head. Melody notes carry their beams below (stems down), so a
@@ -609,7 +676,13 @@ function findOpenNoteheads(
     const bh = maxY - minY + 1
     const dia = (bw + bh) / 2
     const aspect = bw / bh
-    if (dia >= sp * 0.22 && dia <= sp * 0.75 && aspect > 0.5 && aspect < 2) {
+    // A minim's counter is a solid ellipse, tilted so it is wider than tall, and
+    // it fills ~78% of its bounding box. The gaps enclosed between beams, stems
+    // and slurs are triangular or wedge-shaped (~50% or less) and often the
+    // wrong proportions — without these shape tests they read as minims and
+    // wildly inflate the note lengths.
+    const fill = area / (bw * bh)
+    if (dia >= sp * 0.28 && dia <= sp * 0.62 && aspect > 0.9 && aspect < 2.4 && fill >= 0.55) {
       const cx = sx / area
       const cy = sy / area
       if (!filled.some((f) => Math.hypot(f.x - cx, f.y - cy) < sp * 0.8)) {
@@ -736,7 +809,7 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
 
   const staves = detectStaves(ink, w, h, warnings)
   if (staves.length === 0) {
-    return { notes: [], staves, width: w, height: h, skewDeg, processedGray: gray, warnings }
+    return { notes: [], staves, barlines: [], width: w, height: h, skewDeg, processedGray: gray, warnings }
   }
   const sp = staves.reduce((a, s) => a + s.spacing, 0) / staves.length
 
@@ -1003,8 +1076,19 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     }
   }
 
+  const barlines = staves.map((s, si) =>
+    detectBarlines(
+      ink,
+      w,
+      h,
+      s,
+      sp,
+      notes.filter((n) => n.staffIndex === si).map((n) => n.x),
+    ),
+  )
+
   if (notes.length === 0) {
     warnings.push('Staves were found but no noteheads were detected. Try a sharper, higher-contrast photo.')
   }
-  return { notes, staves, width: w, height: h, skewDeg, processedGray: gray, warnings }
+  return { notes, staves, barlines, width: w, height: h, skewDeg, processedGray: gray, warnings }
 }
