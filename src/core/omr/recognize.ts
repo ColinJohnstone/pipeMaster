@@ -1202,7 +1202,10 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
       // gracenotes read correctly while the combined embellishments never did.
       // Artefacts below the staff are already excluded by the Low G…High A band.
       if (Math.abs(s.y - n.y) > sp * 5) continue
-      if (dx > sp * 0.35 && dx < sp * 3.5 && dx < bestDx) {
+      // Reach far enough for a whole cluster: a grip's first gracenote sits ~3.6
+      // spaces out and a taorluath's further still, so a 3.5-space window kept
+      // only the last one or two and no combined embellishment could match.
+      if (dx > sp * 0.35 && dx < sp * 4.6 && dx < bestDx) {
         bestDx = dx
         target = n
       }
