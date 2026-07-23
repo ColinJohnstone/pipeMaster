@@ -39,11 +39,29 @@ export interface DetectedStaff {
   spacing: number
 }
 
+export interface OmrRepeat {
+  staffIndex: number
+  x: number
+  /** 'start' = |: (dots right of the line), 'end' = :| (dots left). */
+  kind: 'start' | 'end'
+}
+
+export interface OmrVolta {
+  staffIndex: number
+  /** Bracket span in image x. */
+  x0: number
+  x1: number
+  num: 1 | 2
+}
+
 export interface OmrResult {
   notes: DetectedNote[]
   staves: DetectedStaff[]
   /** Barline x positions per staff, so bars survive a misread note length. */
   barlines: number[][]
+  /** Repeat barlines (dots beside a line), and 1st/2nd ending brackets. */
+  repeats: OmrRepeat[]
+  voltas: OmrVolta[]
   width: number
   height: number
   /** Degrees the image was rotated to straighten the staves. */
@@ -638,6 +656,119 @@ function musicStartX(
  * into one. Knowing where the bars actually are means bar structure survives
  * even when a note's duration is misread.
  */
+/**
+ * Is this barline a repeat sign, and which way does it face? A repeat barline
+ * carries two dots stacked in the middle two spaces of the staff — to the LEFT
+ * of the line for an end repeat (:|), to the RIGHT for a start (|:). Look for
+ * ink in both dot spaces just off each side of the line.
+ */
+function detectRepeatKind(
+  ink: Uint8Array,
+  w: number,
+  h: number,
+  staff: DetectedStaff,
+  sp: number,
+  barX: number,
+): 'start' | 'end' | null {
+  const L = staff.lines
+  // The two spaces either side of the middle line hold the dots.
+  const dotYs = [(L[1] + L[2]) / 2, (L[2] + L[3]) / 2].map(Math.round)
+  const inkNear = (cx: number, cy: number, rad = sp * 0.3): boolean => {
+    const r = Math.round(rad)
+    for (let y = cy - r; y <= cy + r; y++)
+      for (let x = cx - r; x <= cx + r; x++) if (inkAt(ink, w, h, x, y)) return true
+    return false
+  }
+  // A repeat dot is a small round speck; a notehead sharing the space is far
+  // wider. Require a compact ink blob at the dot — present, but narrow.
+  const isDot = (cx: number, cy: number): boolean => {
+    if (!inkNear(cx, cy, sp * 0.22)) return false
+    const runW = hRun(ink, w, h, cx, cy, 1) + hRun(ink, w, h, cx, cy, -1)
+    return runW > 0 && runW <= sp * 0.55
+  }
+  const sideHasDots = (dir: -1 | 1): boolean => {
+    // Dots sit ~0.5–1.5 sp off the line; sample a couple of offsets.
+    for (const off of [sp * 0.7, sp * 1.1]) {
+      const cx = Math.round(barX + dir * off)
+      if (!dotYs.every((cy) => isDot(cx, cy))) continue
+      // A repeat dot is an isolated speck. A stem or a notehead edge that
+      // happens to fill the two spaces runs on ABOVE the upper dot and BELOW
+      // the lower one — so reject anything with ink in that vertical margin.
+      if (inkNear(cx, dotYs[0] - sp * 0.9, sp * 0.25)) continue
+      if (inkNear(cx, dotYs[1] + sp * 0.9, sp * 0.25)) continue
+      return true
+    }
+    return false
+  }
+  // Dots belong to one side only; if both look dotted it is note ink, not a
+  // repeat, so take neither.
+  const left = sideHasDots(-1)
+  const right = sideHasDots(1)
+  if (left && !right) return 'end'
+  if (right && !left) return 'start'
+  return null
+}
+
+/**
+ * Find 1st/2nd ending brackets above a staff. A volta is a horizontal rule over
+ * the ending bars, a short distance above the top line. Detect long horizontal
+ * ink runs in that band and take each as one bracket; number them in reading
+ * order (voltas always go 1 then 2), which sidesteps reading the digit itself.
+ */
+function detectVoltasForStaff(
+  ink: Uint8Array,
+  w: number,
+  h: number,
+  staff: DetectedStaff,
+  sp: number,
+  leftEdge: number,
+): Array<{ x0: number; x1: number }> {
+  const topLine = staff.lines[0]
+  const y0 = Math.round(topLine - sp * 3.5)
+  const y1 = Math.round(topLine - sp * 1.0)
+  if (y0 < 0) return []
+  // A volta rule is a thin horizontal line at a near-constant height. For each
+  // column above the staff, record the y of ink in the band (topmost hit); a
+  // column is "on the rule" if it has ink. Working by column, not by a single
+  // continuous row, tolerates a slightly skewed or broken bracket line.
+  const colY: number[] = new Array(w).fill(-1)
+  for (let x = Math.round(leftEdge); x < w; x++) {
+    for (let y = y0; y <= y1; y++)
+      if (inkAt(ink, w, h, x, y)) {
+        colY[x] = y
+        break
+      }
+  }
+  // Group runs of inked columns, allowing a small gap, into candidate spans.
+  const spans: Array<{ x0: number; x1: number; ys: number[] }> = []
+  let sx = -1
+  let gap = 0
+  let ys: number[] = []
+  for (let x = Math.round(leftEdge); x < w; x++) {
+    if (colY[x] >= 0) {
+      if (sx < 0) sx = x
+      ys.push(colY[x])
+      gap = 0
+    } else if (sx >= 0) {
+      if (++gap > sp * 0.8) {
+        spans.push({ x0: sx, x1: x - gap, ys })
+        sx = -1
+        ys = []
+      }
+    }
+  }
+  if (sx >= 0) spans.push({ x0: sx, x1: w - 1, ys })
+  // A real ending bracket spans about a bar AND lies flat (its ink stays at a
+  // near-constant height). A beamed gracenote cluster is both shorter and, with
+  // its slanted flags, far more variable in height.
+  return spans.filter((s) => {
+    if (s.x1 - s.x0 < sp * 6) return false
+    const mean = s.ys.reduce((a, b) => a + b, 0) / s.ys.length
+    const varr = s.ys.reduce((a, b) => a + (b - mean) * (b - mean), 0) / s.ys.length
+    return Math.sqrt(varr) <= sp * 0.6
+  })
+}
+
 function detectBarlines(
   ink: Uint8Array,
   w: number,
@@ -938,7 +1069,18 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
 
   const staves = detectStaves(ink, w, h, warnings)
   if (staves.length === 0) {
-    return { notes: [], staves, barlines: [], width: w, height: h, skewDeg, processedGray: gray, warnings }
+    return {
+      notes: [],
+      staves,
+      barlines: [],
+      repeats: [],
+      voltas: [],
+      width: w,
+      height: h,
+      skewDeg,
+      processedGray: gray,
+      warnings,
+    }
   }
   const sp = staves.reduce((a, s) => a + s.spacing, 0) / staves.length
 
@@ -1429,8 +1571,40 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     ),
   )
 
+  // Repeat barlines: check each detected line for dots on either side.
+  const repeats: OmrRepeat[] = []
+  staves.forEach((s, si) => {
+    for (const x of barlines[si]) {
+      const kind = detectRepeatKind(ink, w, h, s, sp, x)
+      if (kind) repeats.push({ staffIndex: si, x, kind })
+    }
+  })
+
+  // 1st/2nd ending brackets, numbered in reading order (voltas run 1 then 2).
+  const voltas: OmrVolta[] = []
+  const brackets: Array<{ staffIndex: number; x0: number; x1: number }> = []
+  staves.forEach((s, si) => {
+    for (const b of detectVoltasForStaff(ink, w, h, s, sp, leftEdge))
+      brackets.push({ staffIndex: si, ...b })
+  })
+  brackets.sort((a, b) => a.staffIndex - b.staffIndex || a.x0 - b.x0)
+  brackets.forEach((b, i) => {
+    voltas.push({ staffIndex: b.staffIndex, x0: b.x0, x1: b.x1, num: ((i % 2) + 1) as 1 | 2 })
+  })
+
   if (notes.length === 0) {
     warnings.push('Staves were found but no noteheads were detected. Try a sharper, higher-contrast photo.')
   }
-  return { notes, staves, barlines, width: w, height: h, skewDeg, processedGray: gray, warnings }
+  return {
+    notes,
+    staves,
+    barlines,
+    repeats,
+    voltas,
+    width: w,
+    height: h,
+    skewDeg,
+    processedGray: gray,
+    warnings,
+  }
 }

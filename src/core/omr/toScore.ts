@@ -1,4 +1,4 @@
-import type { DetectedNote } from './recognize'
+import type { DetectedNote, OmrRepeat, OmrVolta } from './recognize'
 import type { Score } from '../model/types'
 import { newId } from '../model/types'
 import { createNote } from '../model/create'
@@ -20,6 +20,9 @@ import { barCapacityBeats, beats } from '../duration'
  */
 interface Segment {
   notes: DetectedNote[]
+  staffIndex: number
+  /** x of the barline that opened this bar (the previous line, or the staff start). */
+  startX: number
   /** x of the barline that closes this bar, if it was read off the page. */
   endX?: number
 }
@@ -37,17 +40,67 @@ function segmentByBarlines(notes: DetectedNote[], barlines: number[][]): Segment
     const bl = (barlines[si] ?? []).slice().sort((a, b) => a - b)
     let idx = 0
     let cur: DetectedNote[] = []
+    let startX = -Infinity
     for (const n of ns) {
       while (idx < bl.length && n.x > bl[idx]) {
-        if (cur.length) bars.push({ notes: cur, endX: bl[idx] })
+        if (cur.length) bars.push({ notes: cur, staffIndex: si, startX, endX: bl[idx] })
         cur = []
+        startX = bl[idx]
         idx++
       }
       cur.push(n)
     }
-    if (cur.length) bars.push({ notes: cur })
+    if (cur.length) bars.push({ notes: cur, staffIndex: si, startX })
   }
   return bars
+}
+
+/** Mark repeat signs and 1st/2nd endings on the bars they fall on. */
+function applyStructure(
+  segments: Segment[],
+  bars: { repeatStart?: boolean; repeatEnd?: boolean; volta?: 1 | 2 }[],
+  repeats: OmrRepeat[],
+  voltas: OmrVolta[],
+  sp: number,
+): void {
+  const tol = sp * 1.5
+  for (const r of repeats) {
+    if (r.kind === 'end') {
+      // The bar that ends at this line.
+      let best = -1
+      let bestD = tol
+      segments.forEach((s, i) => {
+        if (s.staffIndex !== r.staffIndex || s.endX === undefined) return
+        const d = Math.abs(s.endX - r.x)
+        if (d < bestD) {
+          bestD = d
+          best = i
+        }
+      })
+      if (best >= 0) bars[best].repeatEnd = true
+    } else {
+      // The bar that opens at this line.
+      let best = -1
+      let bestD = tol
+      segments.forEach((s, i) => {
+        if (s.staffIndex !== r.staffIndex) return
+        const d = Math.abs(s.startX - r.x)
+        if (d < bestD) {
+          bestD = d
+          best = i
+        }
+      })
+      if (best >= 0) bars[best].repeatStart = true
+    }
+  }
+  for (const v of voltas) {
+    // Every bar whose notes sit under the bracket gets the ending number.
+    segments.forEach((s, i) => {
+      if (s.staffIndex !== v.staffIndex) return
+      const cx = (s.notes[0].x + s.notes[s.notes.length - 1].x) / 2
+      if (cx >= v.x0 - sp && cx <= v.x1 + sp) bars[i].volta = v.num
+    })
+  }
 }
 
 /** Every note length pipeMaster can represent, with its value in beats. */
@@ -92,10 +145,23 @@ export function omrToScore(
   notes: DetectedNote[],
   timeSig: TimeSig,
   title: string,
-  meta?: { composer?: string; tuneType?: string; barlines?: number[][] },
+  meta?: {
+    composer?: string
+    tuneType?: string
+    barlines?: number[][]
+    repeats?: OmrRepeat[]
+    voltas?: OmrVolta[]
+    sp?: number
+  },
 ): Score {
   const cap = barCapacityBeats(timeSig)
-  const bars: { id: string; notes: ReturnType<typeof createNote>[] }[] = []
+  const bars: {
+    id: string
+    notes: ReturnType<typeof createNote>[]
+    repeatStart?: boolean
+    repeatEnd?: boolean
+    volta?: 1 | 2
+  }[] = []
   const segments = meta?.barlines?.length ? segmentByBarlines(notes, meta.barlines) : null
   if (segments && segments.length > 0) {
     for (const seg of segments) {
@@ -109,6 +175,7 @@ export function omrToScore(
         notes: seg.notes.map((n, i) => createNote(n.pitch, durs[i], n.embellishment)),
       })
     }
+    applyStructure(segments, bars, meta?.repeats ?? [], meta?.voltas ?? [], meta?.sp ?? 10)
   } else {
     // No barlines read — fall back to packing notes up to the meter's capacity.
     let current: ReturnType<typeof createNote>[] = []

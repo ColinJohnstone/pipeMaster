@@ -452,6 +452,9 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
         composer: composer.trim(),
         tuneType: tuneType.trim(),
         barlines: result.barlines,
+        repeats: result.repeats,
+        voltas: result.voltas,
+        sp: result.staves[0]?.spacing,
       }),
     )
     onClose()

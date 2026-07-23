@@ -193,6 +193,28 @@ describe('OMR → Score conversion', () => {
     expect(r.staves.length).toBe(0)
     expect(r.warnings.length).toBeGreaterThan(0)
   })
+
+  it('places detected repeats and endings on the right bars', () => {
+    // Two bars per staff, split by a barline at x=150 (staff spacing 12).
+    const notes = [
+      { pitch: 'LowA', x: 100, y: 70, staffIndex: 0, base: 4, dots: false, graces: [] },
+      { pitch: 'B', x: 200, y: 64, staffIndex: 0, base: 4, dots: false, graces: [] },
+      { pitch: 'C', x: 100, y: 58, staffIndex: 1, base: 4, dots: false, graces: [] },
+      { pitch: 'D', x: 200, y: 52, staffIndex: 1, base: 4, dots: false, graces: [] },
+    ] as unknown as Parameters<typeof omrToScore>[0]
+    const score = omrToScore(notes, { beats: 2, unit: 4 }, 'Test', {
+      barlines: [[150], [150]],
+      // End repeat closes bar 0 (line at 150 on staff 0); the 2nd-ending bracket
+      // sits over bar 1 of staff 0 (the note at x=200).
+      repeats: [{ staffIndex: 0, x: 150, kind: 'end' }],
+      voltas: [{ staffIndex: 0, x0: 175, x1: 240, num: 2 }],
+      sp: 12,
+    })
+    const bars = score.parts[0].bars
+    expect(bars[0].repeatEnd).toBe(true)
+    expect(bars[1].volta).toBe(2)
+    expect(bars[2].repeatEnd).toBeUndefined()
+  })
 })
 
 describe('OCR header parsing', () => {
