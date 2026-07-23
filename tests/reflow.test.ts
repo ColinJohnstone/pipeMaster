@@ -91,6 +91,59 @@ describe('reflowPart — auto bar overflow', () => {
     expect(pitches(s, 2)).toEqual(['E'])
   })
 
+  it('pulls the next bar back to fill a bar left short', () => {
+    // Bar 0 has 3 crotchets (short by one); bar 1 has the rest.
+    const s = scoreOf([
+      [createNote('LowA', q), createNote('B', q), createNote('C', q)],
+      [createNote('D', q), createNote('E', q)],
+    ])
+    reflowPart(s, 0, 0)
+    expect(pitches(s, 0)).toEqual(['LowA', 'B', 'C', 'D'])
+    expect(pitches(s, 1)).toEqual(['E'])
+  })
+
+  it('repacks when the meter widens (2/4 → 4/4)', () => {
+    // Four bars of two crotchets under 4/4 repack into two full bars.
+    const s = scoreOf(
+      [
+        [createNote('LowA', q), createNote('B', q)],
+        [createNote('C', q), createNote('D', q)],
+        [createNote('E', q), createNote('F', q)],
+        [createNote('HighG', q), createNote('HighA', q)],
+      ],
+      4,
+      4,
+    )
+    reflowPart(s, 0, 0)
+    expect(pitches(s, 0)).toEqual(['LowA', 'B', 'C', 'D'])
+    expect(pitches(s, 1)).toEqual(['E', 'F', 'HighG', 'HighA'])
+    // The two emptied, unmarked trailing bars are removed.
+    expect(s.parts[0].bars.length).toBe(2)
+  })
+
+  it('does not pull a note back across a repeat boundary', () => {
+    const s = scoreOf([
+      [createNote('LowA', q), createNote('B', q), createNote('C', q)],
+      [createNote('D', q), createNote('E', q)],
+    ])
+    s.parts[0].bars[1].repeatStart = true
+    reflowPart(s, 0, 0)
+    // The short bar stays short; the repeat section is left intact.
+    expect(pitches(s, 0)).toEqual(['LowA', 'B', 'C'])
+    expect(pitches(s, 1)).toEqual(['D', 'E'])
+  })
+
+  it('does not pull a note back across a first/second ending boundary', () => {
+    const s = scoreOf([
+      [createNote('LowA', q), createNote('B', q), createNote('C', q)],
+      [createNote('D', q), createNote('E', q)],
+    ])
+    s.parts[0].bars[1].volta = 2
+    reflowPart(s, 0, 0)
+    expect(pitches(s, 0)).toEqual(['LowA', 'B', 'C'])
+    expect(pitches(s, 1)).toEqual(['D', 'E'])
+  })
+
   it('does not loop on a single note longer than a bar', () => {
     const s = scoreOf([[createNote('LowA', h)]], 2, 4) // minim in a 2/4 bar: exactly full
     const whole = scoreOf([[{ ...createNote('LowA', { base: 1, dots: 0 }) }]], 2, 4)
