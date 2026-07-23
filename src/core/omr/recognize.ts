@@ -70,6 +70,14 @@ const MAX_WIDTH = 1600
 /** Staff spacing below this leaves noteheads too small to resolve reliably. */
 const MIN_SPACING = 9
 
+// Gracenote-to-note attachment, in staff spaces. A head within SEED of a note
+// starts that note's group; a head within GAP of one already in the group joins
+// it, up to MAX from the note overall. Beamed gracenotes are spaced ~1.5 apart
+// while a cluster sits ~2 clear of its note, so GAP walks a group and stops.
+const CLUSTER_SEED = 4.6
+const CLUSTER_GAP = 2
+const CLUSTER_MAX = 8
+
 // -- Basic image ops ---------------------------------------------------------
 
 function toGray(data: Uint8ClampedArray, w: number, h: number): Uint8Array {
@@ -1139,6 +1147,7 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
   // Small blobs are either augmentation dots (just right of a notehead, same
   // height) or gracenotes (left of / above the note they lead into). Classify
   // by position so a dot is never mistaken for a gracenote.
+  const heads: { s: Blob; staff: number }[] = []
   for (const s of smallBlobs) {
     const staff = nearestStaff(staves, s.y)
 
@@ -1189,6 +1198,27 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
     )
       continue
 
+    heads.push({ s, staff })
+  }
+
+  /**
+   * Attach each gracenote head to the note it decorates.
+   *
+   * Distance alone cannot do this. The gracenotes of one embellishment are
+   * beamed into a group, and a long group reaches a long way back: the leading
+   * High G of a doubling sits over five spaces from its note, further than the
+   * gap between two melody notes. Widening the window to cover it starts
+   * stealing the previous note's gracenotes instead.
+   *
+   * So attach by GROUP, the way the engraving is actually built. A head near a
+   * note claims it; then any head close to an already-claimed one joins the same
+   * note, repeatedly. A beamed cluster is evenly spaced — much tighter than the
+   * gap from the cluster to its note — so the chain walks the whole group and
+   * stops at its left edge instead of running on into the previous note's.
+   */
+  const owner = new Map<{ s: Blob; staff: number }, DetectedNote>()
+  for (const head of heads) {
+    const { s, staff } = head
     let target: DetectedNote | undefined
     let bestDx = Infinity
     for (const n of notes) {
@@ -1202,16 +1232,38 @@ export function recognize(source: ImageData, opts: RecognizeOptions = {}): OmrRe
       // gracenotes read correctly while the combined embellishments never did.
       // Artefacts below the staff are already excluded by the Low G…High A band.
       if (Math.abs(s.y - n.y) > sp * 5) continue
-      // Reach far enough for a whole cluster: a grip's first gracenote sits ~3.6
-      // spaces out and a taorluath's further still, so a 3.5-space window kept
-      // only the last one or two and no combined embellishment could match.
-      if (dx > sp * 0.35 && dx < sp * 4.6 && dx < bestDx) {
+      if (dx > sp * 0.35 && dx < sp * CLUSTER_SEED && dx < bestDx) {
         bestDx = dx
         target = n
       }
     }
-    if (target)
-      target.graces.push({ pitch: pitchForY(staves[staff], s.y, phases[staff]), x: s.x, y: s.y })
+    if (target) owner.set(head, target)
+  }
+  // Grow each group leftwards along the chain of neighbouring heads.
+  for (;;) {
+    let grew = false
+    for (const head of heads) {
+      if (owner.has(head)) continue
+      for (const other of heads) {
+        const n = owner.get(other)
+        if (!n || other.staff !== head.staff) continue
+        // Only ever reach further LEFT, and never past the whole-cluster limit —
+        // no embellishment is wider than that, so this cannot walk into the
+        // previous note's gracenotes.
+        if (head.s.x >= other.s.x || other.s.x - head.s.x > sp * CLUSTER_GAP) continue
+        if (n.x - head.s.x > sp * CLUSTER_MAX) continue
+        owner.set(head, n)
+        grew = true
+        break
+      }
+    }
+    if (!grew) break
+  }
+  for (const head of heads) {
+    const n = owner.get(head)
+    if (!n) continue
+    const { s, staff } = head
+    n.graces.push({ pitch: pitchForY(staves[staff], s.y, phases[staff]), x: s.x, y: s.y })
   }
 
   // Reverse-match each gracenote cluster to an embellishment.
