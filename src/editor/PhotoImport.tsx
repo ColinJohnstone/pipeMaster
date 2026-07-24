@@ -111,6 +111,46 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
   const videoRef = React.useRef<HTMLVideoElement>(null)
   const streamRef = React.useRef<MediaStream | null>(null)
   const sourceRef = React.useRef<ImageData | null>(null)
+  // Guard the browser Back gesture. On a phone a stray edge-swipe navigates
+  // away and takes the whole import with it. Push a history entry while the
+  // dialog is open so that a Back lands here as a `popstate` we can catch: if
+  // there is unsaved work, confirm before discarding; otherwise just close. A
+  // beforeunload handler is the backstop for a real page-leave.
+  const notesRef = React.useRef<DetectedNote[]>([])
+  notesRef.current = notes
+  const closeRef = React.useRef(onClose)
+  closeRef.current = onClose
+  React.useEffect(() => {
+    // Add one entry so a Back gesture lands here as a popstate instead of
+    // leaving the page. No history.back() in cleanup — doing that fires a
+    // popstate the next mount would catch (and it double-fires under React
+    // StrictMode); a spare entry left behind is harmless.
+    if (!window.history.state?.pmImport) window.history.pushState({ pmImport: true }, '')
+    const onPop = () => {
+      if (
+        notesRef.current.length === 0 ||
+        window.confirm('Leave the import? Any corrections you have made will be lost.')
+      ) {
+        closeRef.current()
+      } else {
+        // Stay open: replace the entry the Back gesture just consumed.
+        window.history.pushState({ pmImport: true }, '')
+      }
+    }
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (notesRef.current.length > 0) {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+    window.addEventListener('popstate', onPop)
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => {
+      window.removeEventListener('popstate', onPop)
+      window.removeEventListener('beforeunload', onBeforeUnload)
+    }
+  }, [])
+
   // Live state for a drag-to-reposition gesture on the overlay.
   const dragRef = React.useRef<{
     i: number // index of the note being dragged, or -1 for an empty-staff press
