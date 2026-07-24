@@ -66,7 +66,9 @@ async function rasterizePdf(file: File): Promise<HTMLCanvasElement> {
   const pdfjsLib = await import('pdfjs-dist')
   // Vite's ?worker import yields a real Worker constructor, which pdf.js takes
   // via workerPort. The ?url form returned something pdf.js rejected with
-  // "Invalid `workerSrc` type", which broke every PDF import.
+  // "Invalid `workerSrc` type", which broke every PDF import. The worker is
+  // emitted as a CLASSIC script (see vite.config `worker.format`) so it loads
+  // in browsers that reject module workers.
   const workerMod = (await import('pdfjs-dist/build/pdf.worker.min.mjs?worker')) as unknown as {
     default: new () => Worker
   }
