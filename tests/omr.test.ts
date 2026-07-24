@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { recognize } from '../src/core/omr/recognize'
-import { omrToScore, inferTimeSig } from '../src/core/omr/toScore'
+import { omrToScore, inferTimeSig, meterForType } from '../src/core/omr/toScore'
 import { matchEmbellishment } from '../src/core/omr/matchEmbellishment'
 import { parseHeader } from '../src/core/omr/ocr'
 
@@ -215,6 +215,16 @@ describe('OMR → Score conversion', () => {
     // Three-beat bars packed with six quavers → 6/8, not 3/4.
     g = build([six, six, six, six, six])
     expect(inferTimeSig(g.notes, g.barlines)).toEqual({ beats: 6, unit: 8 })
+  })
+
+  it('lets the tune type settle 3/4 vs 6/8', () => {
+    const sixEight = { beats: 6, unit: 8 } as const
+    expect(meterForType(sixEight, 'Waltz')).toEqual({ beats: 3, unit: 4 })
+    expect(meterForType(sixEight, 'March/Strathspey')).toEqual(sixEight) // unchanged
+    expect(meterForType({ beats: 3, unit: 4 }, 'Jig')).toEqual({ beats: 6, unit: 8 })
+    // Only touches three-beat meters.
+    expect(meterForType({ beats: 4, unit: 4 }, 'Waltz')).toEqual({ beats: 4, unit: 4 })
+    expect(meterForType(sixEight, undefined)).toEqual(sixEight)
   })
 
   it('reports a helpful warning when no staff is found', () => {

@@ -170,6 +170,20 @@ export function inferTimeSig(notes: DetectedNote[], barlines: number[][]): TimeS
   return BY_CAP[cap] ?? null
 }
 
+/**
+ * The tune type breaks the 3/4-vs-6/8 tie the notes can't. A waltz (or minuet)
+ * is always 3/4; a jig, or a march written in 6/8, is compound. Both fill a
+ * three-beat bar with six quavers, so only the named dance tells them apart —
+ * used to correct the density guess once header OCR has read the type.
+ */
+export function meterForType(ts: TimeSig, tuneType: string | undefined): TimeSig {
+  if (!tuneType || barCapacityBeats(ts) !== 3) return ts
+  const t = tuneType.toLowerCase()
+  if (/waltz|minuet/.test(t)) return { beats: 3, unit: 4 }
+  if (/jig/.test(t)) return { beats: 6, unit: 8 }
+  return ts
+}
+
 export function omrToScore(
   notes: DetectedNote[],
   timeSig: TimeSig,

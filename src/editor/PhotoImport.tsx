@@ -6,7 +6,7 @@ import {
   type OmrResult,
   type DetectedNote,
 } from '../core/omr/recognize'
-import { omrToScore, inferTimeSig } from '../core/omr/toScore'
+import { omrToScore, inferTimeSig, meterForType } from '../core/omr/toScore'
 import { ocrHeader } from '../core/omr/ocr'
 import { saveOmrExample, downloadOmrDataset } from '../persistence/idb'
 import { PITCHES, type Pitch } from '../core/pitch'
@@ -257,6 +257,9 @@ export function PhotoImport({ timeSig, onImport, onClose }: Props) {
             setTs(h.timeSig)
           }
         }
+        // The named dance settles 3/4 vs 6/8 when the notes can't (a waltz reads
+        // as 6/8 by density, but a waltz is always 3/4).
+        if (h.tuneType) setTs((prev) => meterForType(prev, h.tuneType))
       })
       .catch(() => {})
       .finally(() => !cancelled && setOcrBusy(false))
